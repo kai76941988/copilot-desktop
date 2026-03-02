@@ -28,53 +28,32 @@ jobs:
         with:
           version: 10.26.2
 
-      - name: Setup Rust
-        uses: actions/rust-lang/setup-rust-toolchain@v1
-        with:
-          rust-version: '1.93.0'
-          targets: x86_64-pc-windows-msvc
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build CLI
         run: pnpm run cli:build
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
       - name: Verify configuration files
         run: |
           echo "=== Checking pake.json ==="
-          cat src-tauri/pake.json
+          type src-tauri\pake.json
           echo ""
           echo "=== Checking tauri.conf.json ==="
-          cat src-tauri/tauri.conf.json
+          type src-tauri\tauri.conf.json
           echo ""
           echo "=== Checking icon files ==="
           dir src-tauri\png\copilot_*.ico
           dir src-tauri\png\copilot_*.png
 
       - name: Build Tauri App
-        run: pnpm run build:msi
-        env:
-          RUSTFLAGS: "-C target-cpu=native"
+        run: pnpm run build
 
       - name: Find generated MSI package
         id: find_package
@@ -83,16 +62,16 @@ jobs:
           if ($PACKAGE) {
             echo "package_path=$($PACKAGE.FullName)" >> $env:GITHUB_OUTPUT
             echo "package_name=$($PACKAGE.Name)" >> $env:GITHUB_OUTPUT
-            echo "✅ Found package: $($PACKAGE.Name)"
+            Write-Host "✅ Found package: $($PACKAGE.Name)"
           } else {
-            echo "❌ No MSI package found. Looking for other formats..."
-            $PACKAGE = Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            Write-Host "❌ No MSI package found. Searching for any package..."
+            $PACKAGE = Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.msi', '.exe' } | Select-Object -First 1
             if ($PACKAGE) {
               echo "package_path=$($PACKAGE.FullName)" >> $env:GITHUB_OUTPUT
               echo "package_name=$($PACKAGE.Name)" >> $env:GITHUB_OUTPUT
-              echo "⚠️ Found package (not MSI format): $($PACKAGE.Name)"
+              Write-Host "⚠️ Found package: $($PACKAGE.Name)"
             } else {
-              echo "❌ No package found at all"
+              Write-Host "❌ No package found"
               exit 1
             }
           }
@@ -116,12 +95,12 @@ jobs:
             # Microsoft Copilot Desktop App
             
             ## Features
-            - 🎯 Optimized for 1366x768 laptop screens
-            - ⚡ GPU acceleration enabled (WebGPU)
-            - 💾 Low memory footprint (~50-100MB)
-            - 🚀 Smooth scrolling for long articles
-            - 🖥️ Windows 10/11 support
-            - 🔔 System tray support
+            - Optimized for 1366x768 laptop screens
+            - GPU acceleration enabled (WebGPU)
+            - Low memory footprint (~50-100MB)
+            - Smooth scrolling for long articles
+            - Windows 10/11 support
+            - System tray support
             
             ## Installation
             Download the MSI installer and run it to install.
@@ -129,13 +108,6 @@ jobs:
             ## System Requirements
             - Windows 10 or later
             - Microsoft Edge WebView2 Runtime (usually pre-installed)
-            - GPU: Any DirectX 11+ compatible GPU (for hardware acceleration)
-            
-            ## Build Configuration
-            - Window Size: 1280x720 (adapts to screen)
-            - Min Size: 1024x600
-            - GPU Acceleration: Enabled
-            - System Tray: Enabled
             
             Built with Pake + Tauri + Rust
           draft: false
