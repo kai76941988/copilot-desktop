@@ -4,52 +4,35 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'src-tauri/pake.json'
-      - 'src-tauri/tauri.conf.json'
-      - 'src-tauri/tauri.windows.conf.json'
-      - '.github/workflows/build-copilot.yml'
   pull_request:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      debug:
-        description: "Enable debug mode"
-        type: boolean
-        default: false
-
-env:
-  NODE_VERSION: "22"
-  PNPM_VERSION: "10.26.2"
-  RUST_VERSION: "1.93.0"
 
 jobs:
   build:
-    name: Build Microsoft Copilot for Windows
+    name: Build for Windows
     runs-on: windows-latest
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '22'
 
-      - name: Install pnpm ${{ env.PNPM_VERSION }}
+      - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: ${{ env.PNPM_VERSION }}
+          version: 10.26.2
 
-      - name: Setup Rust ${{ env.RUST_VERSION }}
-        uses: dtolnay/rust-action@stable
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Install Rust target for Windows
-        run: rustup target add x86_64-pc-windows-msvc
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -78,30 +61,18 @@ jobs:
 
       - name: Verify configuration files
         run: |
-          echo "Checking pake.json..."
+          echo "=== Checking pake.json ==="
           cat src-tauri/pake.json
           echo ""
-          echo "Checking tauri.conf.json..."
+          echo "=== Checking tauri.conf.json ==="
           cat src-tauri/tauri.conf.json
           echo ""
-          echo "Checking tauri.windows.conf.json..."
-          cat src-tauri/tauri.windows.conf.json
-
-      - name: Verify icon files
-        run: |
-          echo "Checking icon files..."
+          echo "=== Checking icon files ==="
           dir src-tauri\png\copilot_*.ico
           dir src-tauri\png\copilot_*.png
 
-      - name: Build Tauri App (Release)
-        if: ${{ github.event.inputs.debug != 'true' }}
+      - name: Build Tauri App
         run: pnpm run build
-        env:
-          RUSTFLAGS: "-C target-cpu=native"
-
-      - name: Build Tauri App (Debug)
-        if: ${{ github.event.inputs.debug == 'true' }}
-        run: pnpm run build:debug
         env:
           RUSTFLAGS: "-C target-cpu=native"
 
@@ -119,19 +90,20 @@ jobs:
           }
 
       - name: Upload MSI artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
-          name: Microsoft-Copilot-Windows
+          name: Microsoft-Copilot-Windows-Installer
           path: ${{ steps.find_package.outputs.package_path }}
           retention-days: 30
 
-      - name: Create Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: ${{ steps.find_package.outputs.package_path }}
-          name: Microsoft Copilot ${{ github.ref_name }}
+          tag: v1.0.${{ github.run_number }}
+          name: Microsoft Copilot Desktop v1.0.${{ github.run_number }}
           body: |
             # Microsoft Copilot Desktop App
             
@@ -141,6 +113,7 @@ jobs:
             - 💾 Low memory footprint (~50-100MB)
             - 🚀 Smooth scrolling for long articles
             - 🖥️ Windows 10/11 support
+            - 🔔 System tray support
             
             ## Installation
             Download the MSI installer and run it to install.
@@ -156,42 +129,6 @@ jobs:
             - GPU Acceleration: Enabled
             - System Tray: Enabled
             
-            Built with Pake + Tauri 2.10.2 + Rust 1.93.0
-
-  # Optional: Build for other platforms
-  build-macos:
-    name: Build for macOS (Optional)
-    runs-on: macos-latest
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Rust
-        uses: dtolnay/rust-action@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Build CLI
-        run: pnpm run cli:build
-
-      - name: Build for macOS
-        run: pnpm run build:mac
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: Microsoft-Copilot-macOS
-          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
-          retention-days: 30
+            Built with Pake + Tauri + Rust
+          draft: false
+          prerelease: false
