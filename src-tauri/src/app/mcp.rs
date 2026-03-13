@@ -177,7 +177,6 @@ async fn handle_tools_call(request: &JsonRpcRequest, state: McpState) -> JsonRpc
     if let Some(name) = tool_name {
         let tools = state.tools.read().await;
         if let Some(tool) = tools.get(name) {
-        if let Some(tool) = tools.get(name) {
             match (tool.handler)(arguments, &state.app_handle).await {
                 Ok(result) => JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
