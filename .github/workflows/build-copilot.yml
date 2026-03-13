@@ -92,38 +92,94 @@ jobs:
 
       - name: Verify configuration files
         run: |
-          echo "=== Checking pake.json ==="
-          type src-tauri\pake.json
-          echo ""
-          echo "=== Checking tauri.conf.json ==="
-          type src-tauri\tauri.conf.json
-          echo ""
-          echo "=== Checking icon files ==="
-          dir src-tauri\png\copilot_*.ico
-          dir src-tauri\png\copilot_*.png
+          Write-Host "=== Checking pake.json ==="
+          if (Test-Path "src-tauri\pake.json") {
+            Get-Content "src-tauri\pake.json"
+          } else {
+            Write-Host "❌ pake.json not found"
+          }
+          
+          Write-Host ""
+          Write-Host "=== Checking tauri.conf.json ==="
+          if (Test-Path "src-tauri\tauri.conf.json") {
+            Get-Content "src-tauri\tauri.conf.json"
+          } else {
+            Write-Host "❌ tauri.conf.json not found"
+          }
+          
+          Write-Host ""
+          Write-Host "=== Checking dist directory ==="
+          if (Test-Path "dist") {
+            Get-ChildItem "dist" -Recurse
+          } else {
+            Write-Host "❌ dist directory not found"
+          }
+          
+          Write-Host ""
+          Write-Host "=== Checking icon files ==="
+          Get-ChildItem "src-tauri\png\copilot_*.ico" -ErrorAction SilentlyContinue | Select-Object Name
+          Get-ChildItem "src-tauri\png\copilot_*.png" -ErrorAction SilentlyContinue | Select-Object Name
 
       - name: Build Tauri App
         run: |
           Write-Host "=== Starting Tauri Build ==="
-          pnpm run build
+          Write-Host "Current directory: $(Get-Location)"
+          Write-Host "Listing src-tauri contents:"
+          Get-ChildItem "src-tauri" -Depth 2
+          
+          Write-Host ""
+          Write-Host "=== Checking Rust setup ==="
+          rustc --version
+          cargo --version
+          
+          Write-Host ""
+          Write-Host "=== Running pnpm run build with verbose output ==="
+          $env:RUST_BACKTRACE = "1"
+          pnpm run build 2>&1 | Tee-Object -Variable buildOutput
+          
+          Write-Host ""
+          Write-Host "=== Build completed ==="
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "❌ Build failed with exit code: $LASTEXITCODE"
+            Write-Host ""
+            Write-Host "Last output:"
+            $buildOutput[-20..-1] | ForEach-Object { Write-Host $_ }
+          } else {
+            Write-Host "✅ Build completed successfully"
+          }
         shell: pwsh
 
       - name: Check build output directories
         if: always()
         run: |
-          Write-Host "=== Checking target/release/bundle ==="
-          if (Test-Path "src-tauri\target\release\bundle") {
-            Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse -Force | Select-Object FullName
-          } else {
-            Write-Host "❌ target/release/bundle directory does not exist"
-            Write-Host ""
-            Write-Host "=== Checking src-tauri/target ==="
-            if (Test-Path "src-tauri\target") {
-              Get-ChildItem -Path "src-tauri\target" -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object { $_.Depth -le 2 } | Select-Object FullName
+          Write-Host "=== Checking all possible build outputs ==="
+          
+          $searchPaths = @(
+            "src-tauri\target\release",
+            "src-tauri\target\release\bundle",
+            "src-tauri\target\release\deps",
+            "target\release\bundle"
+          )
+          
+          foreach ($path in $searchPaths) {
+            if (Test-Path $path) {
+              Write-Host "Found: $path"
+              Get-ChildItem -Path $path -Recurse -ErrorAction SilentlyContinue | 
+                Where-Object { $_.Extension -in '.exe', '.msi', '.dll' } | 
+                ForEach-Object { Write-Host "  - $($_.FullName)" }
             } else {
-              Write-Host "❌ src-tauri/target does not exist"
+              Write-Host "Not found: $path"
             }
           }
+          
+          Write-Host ""
+          Write-Host "=== Checking for any recent files (last 10 minutes) ==="
+          Get-ChildItem -Path "src-tauri\target" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-10) } |
+            Select-Object FullName, LastWriteTime |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 20
+        shell: pwsh
 
       - name: Find generated MSI package
         if: always()
