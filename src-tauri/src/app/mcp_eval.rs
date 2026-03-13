@@ -58,7 +58,7 @@ struct EvalEventPayload {
     error: Option<String>,
 }
 
-pub fn install_eval_listener(app: &AppHandle) {
+pub fn install_eval_listener(app: AppHandle) {
     let store = app.state::<McpEvalStore>().clone();
     app.listen("mcp-eval-result", move |event: Event| {
         let payload = event.payload();

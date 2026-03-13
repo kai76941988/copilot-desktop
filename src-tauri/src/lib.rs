@@ -88,7 +88,7 @@ pub fn run_app() {
                 tauri_config.clone(),
             ));
             app.manage(McpEvalStore::new());
-            install_eval_listener(app.app_handle());
+            install_eval_listener(app.app_handle().clone());
 
             // --- Menu Construction Start ---
             #[cfg(target_os = "macos")]
