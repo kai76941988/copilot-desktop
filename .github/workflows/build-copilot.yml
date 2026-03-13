@@ -103,39 +103,46 @@ jobs:
           dir src-tauri\png\copilot_*.png
 
       - name: Build Tauri App
-        run: pnpm run build
-        continue-on-error: true
+        run: |
+          Write-Host "=== Starting Tauri Build ==="
+          pnpm run build
+        shell: pwsh
 
       - name: Check build output directories
+        if: always()
         run: |
           Write-Host "=== Checking target/release/bundle ==="
           if (Test-Path "src-tauri\target\release\bundle") {
-            Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse | Select-Object FullName
+            Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse -Force | Select-Object FullName
           } else {
             Write-Host "❌ target/release/bundle directory does not exist"
-          }
-          
-          Write-Host ""
-          Write-Host "=== Checking src-tauri/target ==="
-          if (Test-Path "src-tauri\target") {
-            Get-ChildItem -Path "src-tauri\target" -MaxDepth 2 | Select-Object FullName
+            Write-Host ""
+            Write-Host "=== Checking src-tauri/target ==="
+            if (Test-Path "src-tauri\target") {
+              Get-ChildItem -Path "src-tauri\target" -Recurse -Depth 3 -Force -ErrorAction SilentlyContinue | Where-Object { $_.Depth -le 2 } | Select-Object FullName
+            } else {
+              Write-Host "❌ src-tauri/target does not exist"
+            }
           }
 
       - name: Find generated MSI package
+        if: always()
         id: find_package
         run: |
-          $PACKAGE = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($PACKAGE) {
-            echo "package_path=$($PACKAGE.FullName)" >> $env:GITHUB_OUTPUT
-            echo "package_name=$($PACKAGE.Name)" >> $env:GITHUB_OUTPUT
-            Write-Host "✅ Found MSI package: $($PACKAGE.Name)"
-            exit 0
-          } else {
-            Write-Host "❌ No MSI package found in msi folder"
-            Write-Host "=== Searching all release bundles ==="
-            Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.msi', '.exe' } | ForEach-Object { Write-Host "Found: $($_.FullName)" }
-            exit 1
+          if (Test-Path "src-tauri\target\release\bundle\msi") {
+            $PACKAGE = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($PACKAGE) {
+              echo "package_path=$($PACKAGE.FullName)" >> $env:GITHUB_OUTPUT
+              echo "package_name=$($PACKAGE.Name)" >> $env:GITHUB_OUTPUT
+              Write-Host "✅ Found MSI package: $($PACKAGE.Name)"
+              exit 0
+            }
           }
+          
+          Write-Host "❌ Build failed: No MSI package generated"
+          Write-Host ""
+          Write-Host "The Tauri build did not produce output. Check the 'Build Tauri App' logs above for errors."
+          exit 1
 
       - name: Upload MSI artifact
         if: success()
