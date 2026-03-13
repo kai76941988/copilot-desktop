@@ -1,6 +1,9 @@
 pub mod config;
 pub mod invoke;
 pub mod mcp;
+pub mod mcp_tools;
+pub mod mcp_resources;
+pub mod mcp_prompts;
 #[cfg(target_os = "macos")]
 pub mod menu;
 pub mod setup;

@@ -8,15 +8,13 @@ use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::Manager;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
-pub mod mcp_tools;
-pub mod mcp_resources;
-pub mod mcp_prompts;
-
-use crate::app::config::McpConfig;
+use crate::app::{config::McpConfig};
+use crate::app::mcp_tools;
+use crate::app::mcp_resources;
+use crate::app::mcp_prompts;
 
 #[derive(Clone)]
 pub struct McpState {
@@ -178,6 +176,7 @@ async fn handle_tools_call(request: &JsonRpcRequest, state: McpState) -> JsonRpc
 
     if let Some(name) = tool_name {
         let tools = state.tools.read().await;
+        if let Some(tool) = tools.get(name) {
         if let Some(tool) = tools.get(name) {
             match (tool.handler)(arguments, &state.app_handle).await {
                 Ok(result) => JsonRpcResponse {
