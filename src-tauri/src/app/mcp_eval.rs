@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Event, Manager, WebviewWindow};
+use tauri::{AppHandle, Event, Listener, Manager, WebviewWindow};
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration};
 
@@ -61,9 +61,7 @@ struct EvalEventPayload {
 pub fn install_eval_listener(app: &AppHandle) {
     let store = app.state::<McpEvalStore>().clone();
     app.listen("mcp-eval-result", move |event: Event| {
-        let Some(payload) = event.payload() else {
-            return;
-        };
+        let payload = event.payload();
 
         let Ok(parsed) = serde_json::from_str::<EvalEventPayload>(payload) else {
             return;
