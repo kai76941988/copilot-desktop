@@ -340,6 +340,89 @@ window.addEventListener("DOMContentLoaded", (_event) => {
   contentStyleElement.innerHTML = contentCSS;
   document.head.appendChild(contentStyleElement);
 
+  const copilotLayoutCSS = `
+    @media (max-width: 1400px) {
+      html[data-pake-copilot-layout] #app main {
+        min-height: 100vh !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      html[data-pake-copilot-layout] #app main > div {
+        width: 100% !important;
+        max-width: 680px !important;
+        margin: 0 auto !important;
+      }
+    }
+
+    html[data-pake-copilot-layout] #app [role="navigation"] .flex.min-h-6.w-full.items-center.gap-1\\.5.text-start,
+    html[data-pake-copilot-layout] #app [role="navigation"] .flex.min-h-6.min-w-0.flex-1.items-center.gap-2.text-start.text-base,
+    html[data-pake-copilot-layout] #app [role="navigation"] .flex.min-h-6.min-w-0.flex-1.items-center.gap-2.text-start.text-base > span {
+      line-height: 1.3 !important;
+    }
+
+    html[data-pake-copilot-layout] #app [role="navigation"] .flex.min-h-6.w-full.items-center.gap-1\\.5.text-start,
+    html[data-pake-copilot-layout] #app [role="navigation"] .flex.min-h-6.min-w-0.flex-1.items-center.gap-2.text-start.text-base {
+      align-items: center !important;
+      gap: 10px !important;
+    }
+
+    html[data-pake-copilot-layout] #app [role="navigation"] .truncate {
+      display: inline-block !important;
+      max-width: 100% !important;
+    }
+
+    html[data-pake-copilot-layout] #app [role="navigation"] button,
+    html[data-pake-copilot-layout] #app [role="navigation"] a {
+      height: auto !important;
+      min-height: 40px !important;
+      padding-top: 8px !important;
+      padding-bottom: 8px !important;
+    }
+
+    html[data-pake-ms-login] #lightbox,
+    html[data-pake-ms-login] #i0281,
+    html[data-pake-ms-login] [role="main"] {
+      margin: 0 auto !important;
+    }
+
+    html[data-pake-ms-login] body {
+      display: flex !important;
+      min-height: 100vh !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+  `;
+
+  try {
+    const hostname = window.location.hostname.toLowerCase();
+    const pathname = window.location.pathname.toLowerCase();
+    const htmlEl = document.documentElement;
+    if (hostname === "copilot.microsoft.com") {
+      htmlEl.setAttribute("data-pake-copilot-layout", "1");
+    }
+    if (
+      hostname.includes("login.microsoftonline.com") ||
+      hostname.includes("login.live.com")
+    ) {
+      htmlEl.setAttribute("data-pake-ms-login", "1");
+    }
+    if (hostname === "copilot.microsoft.com" && pathname.includes("/login")) {
+      htmlEl.setAttribute("data-pake-ms-login", "1");
+    }
+
+    if (
+      htmlEl.hasAttribute("data-pake-copilot-layout") ||
+      htmlEl.hasAttribute("data-pake-ms-login")
+    ) {
+      const copilotStyleElement = document.createElement("style");
+      copilotStyleElement.innerHTML = copilotLayoutCSS;
+      document.head.appendChild(copilotStyleElement);
+    }
+  } catch (e) {
+    // ignore
+  }
+
   // Top spacing adapts to head-hiding scenarios
   const topPaddingCSS = `
     #layout > ytmusic-nav-bar{

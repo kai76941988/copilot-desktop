@@ -10,6 +10,25 @@ const shortcuts = {
   ArrowDown: () => scrollTo(0, document.body.scrollHeight),
 };
 
+function shouldUseHtmlZoom() {
+  try {
+    const hostname = window.location.hostname.toLowerCase();
+    const pathname = window.location.pathname.toLowerCase();
+    if (hostname === "copilot.microsoft.com" && pathname.includes("/login")) {
+      return true;
+    }
+    if (hostname.includes("login.microsoftonline.com")) {
+      return true;
+    }
+    if (hostname.includes("login.live.com")) {
+      return true;
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
 function setZoom(zoom) {
   const html = document.getElementsByTagName("html")[0];
   const body = document.body;
@@ -24,8 +43,9 @@ function setZoom(zoom) {
   };
 
   if (isWindows) {
+    const forceHtmlZoom = shouldUseHtmlZoom();
     // Windows 平台：全屏时使用 html.zoom，非全屏使用 transform
-    if (isFullscreen()) {
+    if (isFullscreen() || forceHtmlZoom) {
       // 全屏模式：清除 transform，使用原生 zoom 避免字体重叠
       body.style.transform = "";
       body.style.transformOrigin = "";
@@ -75,6 +95,27 @@ function handleShortcut(event) {
   if (shortcuts[event.key]) {
     event.preventDefault();
     shortcuts[event.key]();
+    return;
+  }
+
+  if (event.code === "NumpadAdd") {
+    event.preventDefault();
+    zoomIn();
+  }
+
+  if (event.code === "NumpadSubtract") {
+    event.preventDefault();
+    zoomOut();
+  }
+}
+
+function handleCtrlWheelZoom(event) {
+  if (!event.ctrlKey) return;
+  event.preventDefault();
+  if (event.deltaY < 0) {
+    zoomIn();
+  } else if (event.deltaY > 0) {
+    zoomOut();
   }
 }
 
@@ -338,6 +379,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
+  document.addEventListener("wheel", handleCtrlWheelZoom, { passive: false });
 
   document.addEventListener(
     "paste",
