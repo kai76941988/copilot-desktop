@@ -42,6 +42,34 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
+      - name: Ensure dist directory exists
+        run: |
+          if (-not (Test-Path "dist")) {
+            New-Item -ItemType Directory -Path "dist" -Force | Out-Null
+          }
+          if (-not (Test-Path "dist/index.html")) {
+            @"
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="UTF-8" />
+              <title>Microsoft Copilot</title>
+            </head>
+            <body>
+              <div id="root"></div>
+              <script type="module" src="/main.js"></script>
+            </body>
+          </html>
+          "@ | Out-File -FilePath "dist/index.html" -Encoding UTF8
+          }
+          if (-not (Test-Path "dist/main.js")) {
+            @"
+          // Microsoft Copilot Desktop App
+          console.log("App loaded");
+          "@ | Out-File -FilePath "dist/main.js" -Encoding UTF8
+          }
+          Write-Host "✅ dist directory prepared"
+
       - name: Verify configuration files
         run: |
           echo "=== Checking pake.json ==="
