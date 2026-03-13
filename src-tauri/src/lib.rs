@@ -16,6 +16,7 @@ use app::{
         clear_cache_and_restart, download_file, download_file_by_binary, send_notification,
         update_theme_mode,
     },
+    mcp_eval::{install_eval_listener, McpEvalStore},
     setup::{set_global_shortcut, set_system_tray},
     window::{open_additional_window_safe, set_window, MultiWindowState},
 };
@@ -86,6 +87,8 @@ pub fn run_app() {
                 pake_config.clone(),
                 tauri_config.clone(),
             ));
+            app.manage(McpEvalStore::new());
+            install_eval_listener(app.app_handle());
 
             // --- Menu Construction Start ---
             #[cfg(target_os = "macos")]

@@ -1,5 +1,6 @@
 pub mod config;
 pub mod invoke;
+pub mod mcp_eval;
 pub mod mcp;
 pub mod mcp_tools;
 pub mod mcp_resources;

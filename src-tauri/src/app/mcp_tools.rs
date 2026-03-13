@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use tauri::Manager;
+use crate::app::mcp_eval::eval_with_result;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolInputSchema {
@@ -166,13 +167,8 @@ pub fn register_tools() -> HashMap<String, Tool> {
                 .and_then(|a| a.get("script")?.as_str())
                 .ok_or("Missing script parameter")?;
             
-            if let Some(window) = app.get_webview_window("pake") {
-                let result = window.eval(script)
-                    .map_err(|e| format!("Script execution failed: {}", e))?;
-                Ok(serde_json::json!({ "success": true, "result": result }))
-            } else {
-                Err("Window not found".to_string())
-            }
+            let result = eval_with_result(app, script, 10000).await?;
+            Ok(serde_json::json!({ "success": true, "result": result }))
         }),
     });
 
@@ -393,21 +389,19 @@ pub fn register_tools() -> HashMap<String, Tool> {
         handler: |args, app| Box::pin(async move {
             let selector = args.and_then(|a| a.get("selector")?.as_str());
             
-            if let Some(window) = app.get_webview_window("pake") {
-                let script = if let Some(sel) = selector {
-                    format!(r#"(function() {{
+            let script = if let Some(sel) = selector {
+                format!(
+                    r#"return (function() {{
                         const el = document.querySelector("{}");
                         return el ? el.outerHTML : null;
-                    }})()"#, sel)
-                } else {
-                    "document.documentElement.outerHTML".to_string()
-                };
-                let content = window.eval(&script)
-                    .map_err(|e| format!("Get content failed: {}", e))?;
-                Ok(serde_json::json!({ "content": content }))
+                    }})()"#,
+                    sel
+                )
             } else {
-                Err("Window not found".to_string())
-            }
+                "return document.documentElement.outerHTML;".to_string()
+            };
+            let content = eval_with_result(app, &script, 10000).await?;
+            Ok(serde_json::json!({ "content": content }))
         }),
     });
 

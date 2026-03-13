@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use tauri::Manager;
+use serde_json::Value;
+use crate::app::mcp_eval::eval_with_result;
 
 #[derive(Clone)]
 pub struct Resource {
@@ -77,7 +79,13 @@ pub fn register_resources() -> HashMap<String, Resource> {
         handler: |app| Box::pin(async move {
             if let Some(window) = app.get_webview_window("pake") {
                 let _ = window;
-                Err("Page content retrieval is not supported in this build".to_string())
+                let value = eval_with_result(app, "return document.documentElement.outerHTML;", 10000)
+                    .await
+                    .map_err(|e| format!("Failed to get content: {}", e))?;
+                match value {
+                    Value::String(text) => Ok(text),
+                    other => Ok(other.to_string()),
+                }
             } else {
                 Err("Window not found".to_string())
             }
@@ -93,7 +101,13 @@ pub fn register_resources() -> HashMap<String, Resource> {
         handler: |app| Box::pin(async move {
             if let Some(window) = app.get_webview_window("pake") {
                 let _ = window;
-                Err("Page text retrieval is not supported in this build".to_string())
+                let value = eval_with_result(app, "return document.body.innerText;", 10000)
+                    .await
+                    .map_err(|e| format!("Failed to get text: {}", e))?;
+                match value {
+                    Value::String(text) => Ok(text),
+                    other => Ok(other.to_string()),
+                }
             } else {
                 Err("Window not found".to_string())
             }
