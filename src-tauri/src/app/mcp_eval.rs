@@ -59,7 +59,7 @@ struct EvalEventPayload {
 }
 
 pub fn install_eval_listener(app: AppHandle) {
-    let store = app.state::<McpEvalStore>().clone();
+    let app_handle = app.clone();
     app.listen("mcp-eval-result", move |event: Event| {
         let payload = event.payload();
 
@@ -73,6 +73,7 @@ pub fn install_eval_listener(app: AppHandle) {
             Err(parsed.error.unwrap_or_else(|| "Unknown error".to_string()))
         };
 
+        let store = app_handle.state::<McpEvalStore>();
         store.complete(parsed.id, result);
     });
 }
