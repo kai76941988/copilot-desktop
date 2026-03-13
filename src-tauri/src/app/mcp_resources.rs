@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 use tauri::Manager;
 
 #[derive(Clone)]
@@ -10,8 +10,12 @@ pub struct Resource {
     pub name: String,
     pub description: String,
     pub mime_type: String,
-    pub handler: fn(&tauri::AppHandle) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + '_>>,
+    pub handler: ResourceHandler,
 }
+
+type ResourceHandler = for<'a> fn(
+    &'a tauri::AppHandle,
+) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
 
 impl Serialize for Resource {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -72,8 +76,8 @@ pub fn register_resources() -> HashMap<String, Resource> {
         mime_type: "text/html".to_string(),
         handler: |app| Box::pin(async move {
             if let Some(window) = app.get_webview_window("pake") {
-                window.eval("document.documentElement.outerHTML")
-                    .map_err(|e| format!("Failed to get content: {}", e))
+                let _ = window;
+                Err("Page content retrieval is not supported in this build".to_string())
             } else {
                 Err("Window not found".to_string())
             }
@@ -88,8 +92,8 @@ pub fn register_resources() -> HashMap<String, Resource> {
         mime_type: "text/plain".to_string(),
         handler: |app| Box::pin(async move {
             if let Some(window) = app.get_webview_window("pake") {
-                window.eval("document.body.innerText")
-                    .map_err(|e| format!("Failed to get text: {}", e))
+                let _ = window;
+                Err("Page text retrieval is not supported in this build".to_string())
             } else {
                 Err("Window not found".to_string())
             }

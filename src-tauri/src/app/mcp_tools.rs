@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
 use tauri::Manager;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,8 +18,13 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub input_schema: ToolInputSchema,
-    pub handler: fn(Option<&serde_json::Value>, &tauri::AppHandle) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, String>> + Send + '_>>,
+    pub handler: ToolHandler,
 }
+
+type ToolHandler = for<'a> fn(
+    Option<&'a serde_json::Value>,
+    &'a tauri::AppHandle,
+) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, String>> + Send + 'a>>;
 
 impl Serialize for Tool {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -129,28 +134,11 @@ pub fn register_tools() -> HashMap<String, Tool> {
         },
         handler: |_args, app| Box::pin(async move {
             if let Some(window) = app.get_webview_window("pake") {
-                #[cfg(target_os = "windows")]
-                {
-                    use tauri::WebviewWindow;
-                    let image = window.capture_image()
-                        .map_err(|e| format!("Failed to capture: {}", e))?;
-                    
-                    let bytes = image.as_bytes();
-                    let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
-                    
-                    Ok(serde_json::json!({
-                        "success": true,
-                        "image": base64,
-                        "mimeType": "image/png"
-                    }))
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    Ok(serde_json::json!({
-                        "success": false,
-                        "error": "Screenshot only supported on Windows"
-                    }))
-                }
+                let _ = window;
+                Ok(serde_json::json!({
+                    "success": false,
+                    "error": "Screenshot is not supported in this build"
+                }))
             } else {
                 Err("Window not found".to_string())
             }
@@ -218,9 +206,9 @@ pub fn register_tools() -> HashMap<String, Tool> {
                     }})()"#,
                     selector
                 );
-                let result = window.eval(&script)
+                window.eval(&script)
                     .map_err(|e| format!("Click failed: {}", e))?;
-                Ok(serde_json::json!({ "success": result == "true" }))
+                Ok(serde_json::json!({ "success": true }))
             } else {
                 Err("Window not found".to_string())
             }
@@ -271,9 +259,9 @@ pub fn register_tools() -> HashMap<String, Tool> {
                     }})()"#,
                     selector, escaped_text
                 );
-                let result = window.eval(&script)
+                window.eval(&script)
                     .map_err(|e| format!("Type failed: {}", e))?;
-                Ok(serde_json::json!({ "success": result == "true" }))
+                Ok(serde_json::json!({ "success": true }))
             } else {
                 Err("Window not found".to_string())
             }
