@@ -1,0 +1,114 @@
+name: Build Microsoft Copilot Desktop App
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build for Windows
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI
+        run: pnpm run cli:build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Verify configuration files
+        run: |
+          echo "=== Checking pake.json ==="
+          type src-tauri\pake.json
+          echo ""
+          echo "=== Checking tauri.conf.json ==="
+          type src-tauri\tauri.conf.json
+          echo ""
+          echo "=== Checking icon files ==="
+          dir src-tauri\png\copilot_*.ico
+          dir src-tauri\png\copilot_*.png
+
+      - name: Build Tauri App
+        run: pnpm run build
+
+      - name: Find generated MSI package
+        id: find_package
+        run: |
+          $PACKAGE = Get-ChildItem -Path "src-tauri\target\release\bundle\msi" -Filter "*.msi" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($PACKAGE) {
+            echo "package_path=$($PACKAGE.FullName)" >> $env:GITHUB_OUTPUT
+            echo "package_name=$($PACKAGE.Name)" >> $env:GITHUB_OUTPUT
+            Write-Host "✅ Found package: $($PACKAGE.Name)"
+          } else {
+            Write-Host "❌ No MSI package found. Searching for any package..."
+            $PACKAGE = Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.msi', '.exe' } | Select-Object -First 1
+            if ($PACKAGE) {
+              echo "package_path=$($PACKAGE.FullName)" >> $env:GITHUB_OUTPUT
+              echo "package_name=$($PACKAGE.Name)" >> $env:GITHUB_OUTPUT
+              Write-Host "⚠️ Found package: $($PACKAGE.Name)"
+            } else {
+              Write-Host "❌ No package found"
+              exit 1
+            }
+          }
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Microsoft-Copilot-Windows-Installer
+          path: ${{ steps.find_package.outputs.package_path }}
+          retention-days: 30
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: ${{ steps.find_package.outputs.package_path }}
+          tag: v1.0.${{ github.run_number }}
+          name: Microsoft Copilot Desktop v1.0.${{ github.run_number }}
+          body: |
+            # Microsoft Copilot Desktop App
+            
+            ## Features
+            - Optimized for 1366x768 laptop screens
+            - GPU acceleration enabled (WebGPU)
+            - Low memory footprint (~50-100MB)
+            - Smooth scrolling for long articles
+            - Windows 10/11 support
+            - System tray support
+            
+            ## Installation
+            Download the MSI installer and run it to install.
+            
+            ## System Requirements
+            - Windows 10 or later
+            - Microsoft Edge WebView2 Runtime (usually pre-installed)
+            
+            Built with Pake + Tauri + Rust
+          draft: false
+          prerelease: false
