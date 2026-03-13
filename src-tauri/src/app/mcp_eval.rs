@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Event, Manager, WebviewWindow};
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration};
 
@@ -60,7 +60,7 @@ struct EvalEventPayload {
 
 pub fn install_eval_listener(app: &AppHandle) {
     let store = app.state::<McpEvalStore>().clone();
-    app.listen_global("mcp-eval-result", move |event| {
+    app.listen("mcp-eval-result", move |event: Event| {
         let Some(payload) = event.payload() else {
             return;
         };
@@ -114,7 +114,8 @@ pub async fn eval_with_result(
 
     let result = timeout(Duration::from_millis(timeout_ms), rx)
         .await
-        .map_err(|_| "Eval timed out".to_string())??;
+        .map_err(|_| "Eval timed out".to_string())?
+        .map_err(|_| "Eval response channel closed".to_string())??;
 
     Ok(result)
 }
