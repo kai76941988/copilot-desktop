@@ -42,6 +42,12 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
+      - name: Setup Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-all-crates: true
+
       - name: Debug - Check dist directory
         run: |
           Write-Host "=== Checking CLI build output ==="
@@ -99,6 +105,21 @@ jobs:
       - name: Build Tauri App
         run: pnpm run build
         continue-on-error: true
+
+      - name: Check build output directories
+        run: |
+          Write-Host "=== Checking target/release/bundle ==="
+          if (Test-Path "src-tauri\target\release\bundle") {
+            Get-ChildItem -Path "src-tauri\target\release\bundle" -Recurse | Select-Object FullName
+          } else {
+            Write-Host "❌ target/release/bundle directory does not exist"
+          }
+          
+          Write-Host ""
+          Write-Host "=== Checking src-tauri/target ==="
+          if (Test-Path "src-tauri\target") {
+            Get-ChildItem -Path "src-tauri\target" -MaxDepth 2 | Select-Object FullName
+          }
 
       - name: Find generated MSI package
         id: find_package
