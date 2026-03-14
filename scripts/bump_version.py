@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from datetime import datetime, timezone
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,9 +34,6 @@ def main() -> None:
     next_version = bump_patch(current)
     package["version"] = next_version
     tauri["version"] = next_version
-
-    build_meta = tauri.setdefault("build", {})
-    build_meta["buildNumber"] = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
     write_json(PACKAGE_JSON, package)
     write_json(TAURI_CONF, tauri)
