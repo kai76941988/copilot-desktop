@@ -50,7 +50,7 @@ pub async fn eval_with_result(
 
         let title = window.title().unwrap_or_default();
         if let Some(rest) = title.strip_prefix(&prefix) {
-            let _ = window.set_title(original_title);
+            let _ = window.set_title(&original_title);
             let parsed: serde_json::Value =
                 serde_json::from_str(rest).map_err(|e| e.to_string())?;
             if parsed
