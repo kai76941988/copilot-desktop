@@ -314,6 +314,166 @@ pub fn register_tools() -> HashMap<String, Tool> {
         }),
     });
 
+    tools.insert("browser_send_and_wait_reply".to_string(), Tool {
+        name: "browser_send_and_wait_reply".to_string(),
+        description: "Send a message and wait for the assistant reply".to_string(),
+        input_schema: ToolInputSchema {
+            type_name: "object".to_string(),
+            properties: {
+                let mut props = HashMap::new();
+                props.insert("message".to_string(), serde_json::json!({
+                    "type": "string",
+                    "description": "Message to send"
+                }));
+                props.insert("timeout_ms".to_string(), serde_json::json!({
+                    "type": "number",
+                    "description": "Wait timeout in milliseconds (default 60000)"
+                }));
+                props.insert("max_len".to_string(), serde_json::json!({
+                    "type": "number",
+                    "description": "Maximum reply length (default 2000)"
+                }));
+                props
+            },
+            required: vec!["message".to_string()],
+        },
+        handler: |args, app| Box::pin(async move {
+            let message = args
+                .and_then(|a| a.get("message")?.as_str())
+                .ok_or("Missing message parameter")?;
+            let timeout_ms = args
+                .and_then(|a| a.get("timeout_ms")?.as_u64())
+                .unwrap_or(60000);
+            let max_len = args
+                .and_then(|a| a.get("max_len")?.as_u64())
+                .unwrap_or(2000) as usize;
+
+            let message_js = serde_json::to_string(message).map_err(|e| e.to_string())?;
+            let script = format!(
+                r#"return await (async function(){{
+  const msg = {message_js};
+  const maxLen = {max_len};
+  const roots = [document];
+  const collect = (root) => {{
+    const all = root.querySelectorAll("*");
+    for (const el of all) {{
+      if (el.shadowRoot) {{
+        roots.push(el.shadowRoot);
+        collect(el.shadowRoot);
+      }}
+    }}
+  }};
+  const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+  collect(document);
+
+  const findInput = () => {{
+    for (const r of roots) {{
+      const candidates = Array.from(r.querySelectorAll("textarea, input, [contenteditable=\\"true\\"]"));
+      for (const el of candidates) {{
+        if (!el.disabled && isVisible(el)) return el;
+      }}
+    }}
+    return null;
+  }};
+
+  const findSendButton = () => {{
+    for (const r of roots) {{
+      const btns = Array.from(r.querySelectorAll("button,[role=\\"button\\"]"));
+      for (const b of btns) {{
+        const label = ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).toLowerCase();
+        if (label.includes("send") || label.includes("发送") || label.includes("提交")) return b;
+      }}
+    }}
+    return null;
+  }};
+
+  const hasGeneratingButton = () => {{
+    for (const r of roots) {{
+      const btns = Array.from(r.querySelectorAll("button,[role=\\"button\\"]"));
+      for (const b of btns) {{
+        const label = ((b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).toLowerCase();
+        if (label.includes("stop generating") || label.includes("停止生成") || label.includes("continue generating") || label.includes("继续生成")) {{
+          return true;
+        }}
+      }}
+    }}
+    return false;
+  }};
+
+  const getLastAssistantText = () => {{
+    const selectors = [
+      "[data-testid=\\"assistant-message\\"]",
+      "[data-testid=\\"chat-message\\"]",
+      ".message",
+      ".chat-message",
+      ".cib-message-main",
+      ".cib-serp-main",
+      ".markdown"
+    ];
+    let nodes = [];
+    for (const sel of selectors) {{
+      nodes = nodes.concat(Array.from(document.querySelectorAll(sel)));
+    }}
+    for (let i = nodes.length - 1; i >= 0; i--) {{
+      const t = (nodes[i].innerText || "").trim();
+      if (t) return t;
+    }}
+    return "";
+  }};
+
+  const input = findInput();
+  if (!input) return {{ ok: false, error: "Input not found" }};
+  try {{ input.focus(); }} catch (e) {{}}
+  if ("value" in input) {{
+    input.value = msg;
+  }} else {{
+    input.textContent = msg;
+  }}
+  input.dispatchEvent(new Event("input", {{ bubbles: true }}));
+  input.dispatchEvent(new Event("change", {{ bubbles: true }}));
+
+  const sendBtn = findSendButton();
+  if (sendBtn && !sendBtn.disabled && isVisible(sendBtn)) {{
+    sendBtn.click();
+  }} else {{
+    input.dispatchEvent(new KeyboardEvent("keydown", {{ key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }}));
+    input.dispatchEvent(new KeyboardEvent("keyup", {{ key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }}));
+  }}
+
+  let sawGenerating = false;
+  let lastText = getLastAssistantText();
+  let lastChange = Date.now();
+  const start = Date.now();
+  while (Date.now() - start < {timeout_ms}) {{
+    const generating = hasGeneratingButton();
+    if (generating) sawGenerating = true;
+    const current = getLastAssistantText();
+    if (current && current !== lastText) {{
+      lastText = current;
+      lastChange = Date.now();
+    }}
+    if (sawGenerating && !generating && lastText) {{
+      break;
+    }}
+    if (!sawGenerating && lastText && Date.now() - lastChange > 1500) {{
+      break;
+    }}
+    await new Promise((r) => setTimeout(r, 300));
+  }}
+  if (lastText.length > maxLen) {{
+    lastText = lastText.slice(0, maxLen);
+  }}
+  return {{ ok: true, reply: lastText }};
+}})();"#,
+                message_js = message_js,
+                timeout_ms = timeout_ms,
+                max_len = max_len
+            );
+            let result = eval_with_result(app, &script, timeout_ms + 5000).await?;
+            Ok(serde_json::json!({ "success": true, "result": result }))
+        }),
+    });
+
     // 滚动
     tools.insert("browser_scroll".to_string(), Tool {
         name: "browser_scroll".to_string(),
