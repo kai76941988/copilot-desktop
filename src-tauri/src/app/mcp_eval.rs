@@ -1,82 +1,8 @@
-use serde::Deserialize;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Event, Listener, Manager, WebviewWindow};
-use tokio::sync::oneshot;
-use tokio::time::{timeout, Duration};
+use tauri::{AppHandle, Manager, WebviewWindow};
+use tokio::time::{sleep, Duration, Instant};
 
-#[derive(Clone)]
-pub struct McpEvalStore {
-    inner: Arc<McpEvalStoreInner>,
-}
-
-struct McpEvalStoreInner {
-    next_id: AtomicU64,
-    pending: Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>>,
-}
-
-impl McpEvalStore {
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(McpEvalStoreInner {
-                next_id: AtomicU64::new(1),
-                pending: Mutex::new(HashMap::new()),
-            }),
-        }
-    }
-
-    fn register(&self) -> (u64, oneshot::Receiver<Result<serde_json::Value, String>>) {
-        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = oneshot::channel();
-        self.inner
-            .pending
-            .lock()
-            .expect("MCP eval store poisoned")
-            .insert(id, tx);
-        (id, rx)
-    }
-
-    fn complete(&self, id: u64, result: Result<serde_json::Value, String>) {
-        if let Some(tx) = self
-            .inner
-            .pending
-            .lock()
-            .expect("MCP eval store poisoned")
-            .remove(&id)
-        {
-            let _ = tx.send(result);
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct EvalEventPayload {
-    id: u64,
-    ok: bool,
-    value: Option<serde_json::Value>,
-    error: Option<String>,
-}
-
-pub fn install_eval_listener(app: AppHandle) {
-    let app_handle = app.clone();
-    app.listen("mcp-eval-result", move |event: Event| {
-        let payload = event.payload();
-
-        let Ok(parsed) = serde_json::from_str::<EvalEventPayload>(payload) else {
-            return;
-        };
-
-        let result = if parsed.ok {
-            Ok(parsed.value.unwrap_or(serde_json::Value::Null))
-        } else {
-            Err(parsed.error.unwrap_or_else(|| "Unknown error".to_string()))
-        };
-
-        let store = app_handle.state::<McpEvalStore>();
-        store.complete(parsed.id, result);
-    });
-}
+static NEXT_EVAL_ID: AtomicU64 = AtomicU64::new(1);
 
 pub async fn eval_with_result(
     app: &AppHandle,
@@ -84,12 +10,16 @@ pub async fn eval_with_result(
     timeout_ms: u64,
 ) -> Result<serde_json::Value, String> {
     let window: WebviewWindow = app.get_webview_window("pake").ok_or("Window not found")?;
-    let store = app.state::<McpEvalStore>().clone();
-    let (id, rx) = store.register();
 
+    let original_title = window.title().unwrap_or_default();
+    let id = NEXT_EVAL_ID.fetch_add(1, Ordering::Relaxed);
+    let prefix = format!("__MCP_EVAL__{}:", id);
+    let prefix_js = serde_json::to_string(&prefix).map_err(|e| e.to_string())?;
     let user_code = serde_json::to_string(script).map_err(|e| e.to_string())?;
+
     let js = format!(
         r#"(async () => {{
+  const prefix = {prefix_js};
   const userCode = {user_code};
   const run = async () => {{
     const fn = new Function("return (async () => {{ " + userCode + " }})()");
@@ -97,24 +27,46 @@ pub async fn eval_with_result(
   }};
   try {{
     const value = await run();
-    const payload = {{ id: {id}, ok: true, value: (value === undefined ? null : value) }};
-    window.__TAURI__.event.emit("mcp-eval-result", payload);
+    const payload = JSON.stringify({{ ok: true, value: (value === undefined ? null : value) }});
+    document.title = prefix + payload;
   }} catch (e) {{
-    window.__TAURI__.event.emit("mcp-eval-result", {{ id: {id}, ok: false, error: String(e) }});
+    const payload = JSON.stringify({{ ok: false, error: String(e) }});
+    document.title = prefix + payload;
   }}
 }})();"#,
-        user_code = user_code,
-        id = id
+        prefix_js = prefix_js,
+        user_code = user_code
     );
 
     window
         .eval(&js)
         .map_err(|e| format!("Eval failed: {}", e))?;
 
-    let result = timeout(Duration::from_millis(timeout_ms), rx)
-        .await
-        .map_err(|_| "Eval timed out".to_string())?
-        .map_err(|_| "Eval response channel closed".to_string())??;
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if Instant::now() > deadline {
+            return Err("Eval timed out".to_string());
+        }
 
-    Ok(result)
+        let title = window.title().unwrap_or_default();
+        if let Some(rest) = title.strip_prefix(&prefix) {
+            let _ = window.set_title(original_title);
+            let parsed: serde_json::Value =
+                serde_json::from_str(rest).map_err(|e| e.to_string())?;
+            if parsed
+                .get("ok")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return Ok(parsed.get("value").cloned().unwrap_or(serde_json::Value::Null));
+            }
+            let msg = parsed
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            return Err(msg.to_string());
+        }
+
+        sleep(Duration::from_millis(50)).await;
+    }
 }
