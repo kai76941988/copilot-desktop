@@ -79,7 +79,20 @@ pub fn register_resources() -> HashMap<String, Resource> {
         handler: |app| Box::pin(async move {
             if let Some(window) = app.get_webview_window("pake") {
                 let _ = window;
-                let value = eval_with_result(app, "return document.documentElement.outerHTML;", 10000)
+                let script = r#"return (function(){
+  const root = document.documentElement;
+  if (!root) return null;
+  const clone = root.cloneNode(true);
+  const inputs = clone.querySelectorAll("input, textarea");
+  inputs.forEach((el) => {
+    el.setAttribute("value", "");
+    if (el.tagName && el.tagName.toLowerCase() === "textarea") {
+      el.textContent = "";
+    }
+  });
+  return clone.outerHTML;
+})();"#;
+                let value = eval_with_result(app, script, 10000)
                     .await
                     .map_err(|e| format!("Failed to get content: {}", e))?;
                 match value {

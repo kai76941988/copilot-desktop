@@ -117,6 +117,56 @@ pub fn register_tools() -> HashMap<String, Tool> {
         }),
     });
 
+    tools.insert("browser_get_ui_state".to_string(), Tool {
+        name: "browser_get_ui_state".to_string(),
+        description: "Get current UI state (URL, title, readyState, and text)".to_string(),
+        input_schema: ToolInputSchema {
+            type_name: "object".to_string(),
+            properties: {
+                let mut props = HashMap::new();
+                props.insert("selector".to_string(), serde_json::json!({
+                    "type": "string",
+                    "description": "CSS selector for specific element text (optional)"
+                }));
+                props.insert("max_len".to_string(), serde_json::json!({
+                    "type": "number",
+                    "description": "Maximum text length (default 1500)"
+                }));
+                props
+            },
+            required: vec![],
+        },
+        handler: |args, app| Box::pin(async move {
+            let selector = args.and_then(|a| a.get("selector")?.as_str());
+            let max_len = args
+                .and_then(|a| a.get("max_len")?.as_u64())
+                .unwrap_or(1500) as usize;
+            let selector_js = match selector {
+                Some(value) => serde_json::to_string(value).map_err(|e| e.to_string())?,
+                None => "null".to_string(),
+            };
+            let script = format!(
+                r#"return (function(){{
+  const sel = {selector_js};
+  let node = null;
+  if (sel) {{
+    node = document.querySelector(sel);
+  }}
+  const text = node ? (node.innerText || "") : (document.body ? (document.body.innerText || "") : "");
+  const url = window.location.href;
+  const title = document.title;
+  const readyState = document.readyState;
+  const trimmed = text.length > {max_len} ? text.slice(0, {max_len}) : text;
+  return {{ url, title, readyState, text: trimmed }};
+}})();"#,
+                selector_js = selector_js,
+                max_len = max_len
+            );
+            let state = eval_with_result(app, &script, 10000).await?;
+            Ok(serde_json::json!({ "success": true, "state": state }))
+        }),
+    });
+
     // 截图
     tools.insert("browser_screenshot".to_string(), Tool {
         name: "browser_screenshot".to_string(),
@@ -388,18 +438,32 @@ pub fn register_tools() -> HashMap<String, Tool> {
         },
         handler: |args, app| Box::pin(async move {
             let selector = args.and_then(|a| a.get("selector")?.as_str());
-            
-            let script = if let Some(sel) = selector {
-                format!(
-                    r#"return (function() {{
-                        const el = document.querySelector("{}");
-                        return el ? el.outerHTML : null;
-                    }})()"#,
-                    sel
-                )
-            } else {
-                "return document.documentElement.outerHTML;".to_string()
+
+            let selector_js = match selector {
+                Some(value) => serde_json::to_string(value).map_err(|e| e.to_string())?,
+                None => "null".to_string(),
             };
+            let script = format!(
+                r#"return (function(){{
+  const sel = {selector_js};
+  const scrub = (root) => {{
+    if (!root) return null;
+    const clone = root.cloneNode(true);
+    const inputs = clone.querySelectorAll("input, textarea");
+    inputs.forEach((el) => {{
+      el.setAttribute("value", "");
+      if (el.tagName && el.tagName.toLowerCase() === "textarea") {{
+        el.textContent = "";
+      }}
+    }});
+    return clone;
+  }};
+  const node = sel ? document.querySelector(sel) : document.documentElement;
+  const cleaned = scrub(node);
+  return cleaned ? cleaned.outerHTML : null;
+}})();"#,
+                selector_js = selector_js
+            );
             let content = eval_with_result(app, &script, 10000).await?;
             Ok(serde_json::json!({ "content": content }))
         }),
@@ -432,30 +496,173 @@ pub fn register_tools() -> HashMap<String, Tool> {
             let timeout = args
                 .and_then(|a| a.get("timeout")?.as_u64())
                 .unwrap_or(5000);
-            
-            if let Some(window) = app.get_webview_window("pake") {
-                let script = format!(
-                    r#"new Promise((resolve, reject) => {{
-                        const timeout = setTimeout(() => reject(new Error("Timeout")), {});
-                        const check = () => {{
-                            const el = document.querySelector("{}");
-                            if (el) {{
-                                clearTimeout(timeout);
-                                resolve(true);
-                            }} else {{
-                                requestAnimationFrame(check);
-                            }}
-                        }};
-                        check();
-                    }})"#,
-                    timeout, selector
-                );
-                window.eval(&script)
-                    .map_err(|e| format!("Wait failed: {}", e))?;
-                Ok(serde_json::json!({ "success": true }))
-            } else {
-                Err("Window not found".to_string())
-            }
+
+            let selector_js = serde_json::to_string(selector).map_err(|e| e.to_string())?;
+            let script = format!(
+                r#"return await new Promise((resolve) => {{
+  const timeout = setTimeout(() => resolve(false), {timeout});
+  const check = () => {{
+    const el = document.querySelector({selector_js});
+    if (el) {{
+      clearTimeout(timeout);
+      resolve(true);
+    }} else {{
+      requestAnimationFrame(check);
+    }}
+  }};
+  check();
+}});"#,
+                timeout = timeout,
+                selector_js = selector_js
+            );
+            let result = eval_with_result(app, &script, timeout + 2000).await?;
+            Ok(serde_json::json!({ "success": result }))
+        }),
+    });
+
+    tools.insert("browser_watch_dom".to_string(), Tool {
+        name: "browser_watch_dom".to_string(),
+        description: "Watch DOM changes and return recent mutations".to_string(),
+        input_schema: ToolInputSchema {
+            type_name: "object".to_string(),
+            properties: {
+                let mut props = HashMap::new();
+                props.insert("since".to_string(), serde_json::json!({
+                    "type": "number",
+                    "description": "Last seen change id (default 0)"
+                }));
+                props.insert("max".to_string(), serde_json::json!({
+                    "type": "number",
+                    "description": "Max number of changes to return (default 100)"
+                }));
+                props
+            },
+            required: vec![],
+        },
+        handler: |args, app| Box::pin(async move {
+            let since = args
+                .and_then(|a| a.get("since")?.as_u64())
+                .unwrap_or(0);
+            let max = args
+                .and_then(|a| a.get("max")?.as_u64())
+                .unwrap_or(100);
+            let script = format!(
+                r#"return (function(){{
+  const key = "__MCP_DOM_WATCH__";
+  const root = document.documentElement || document.body;
+  if (!root) {{
+    return {{ lastId: 0, changes: [], url: location.href, title: document.title }};
+  }}
+  if (!window[key]) {{
+    const state = {{ seq: 0, changes: [] }};
+    const observer = new MutationObserver((mutations) => {{
+      for (const m of mutations) {{
+        const entry = {{
+          id: ++state.seq,
+          type: m.type,
+          target: m.target && m.target.nodeName ? m.target.nodeName.toLowerCase() : null,
+          attributeName: m.attributeName || null,
+          added: m.addedNodes ? m.addedNodes.length : 0,
+          removed: m.removedNodes ? m.removedNodes.length : 0
+        }};
+        state.changes.push(entry);
+      }}
+      if (state.changes.length > 500) {{
+        state.changes = state.changes.slice(-500);
+      }}
+    }});
+    observer.observe(root, {{ childList: true, subtree: true, attributes: true, characterData: true }});
+    state.observer = observer;
+    window[key] = state;
+  }}
+  const state = window[key];
+  const since = {since};
+  const max = {max};
+  let changes = state.changes.filter((c) => c.id > since);
+  if (max > 0 && changes.length > max) {{
+    changes = changes.slice(-max);
+  }}
+  return {{ lastId: state.seq, changes, url: location.href, title: document.title }};
+}})();"#,
+                since = since,
+                max = max
+            );
+            let result = eval_with_result(app, &script, 10000).await?;
+            Ok(serde_json::json!({ "success": true, "result": result }))
+        }),
+    });
+
+    tools.insert("browser_watch_events".to_string(), Tool {
+        name: "browser_watch_events".to_string(),
+        description: "Watch user interactions (click/input/submit) without capturing sensitive values".to_string(),
+        input_schema: ToolInputSchema {
+            type_name: "object".to_string(),
+            properties: {
+                let mut props = HashMap::new();
+                props.insert("since".to_string(), serde_json::json!({
+                    "type": "number",
+                    "description": "Last seen event id (default 0)"
+                }));
+                props.insert("max".to_string(), serde_json::json!({
+                    "type": "number",
+                    "description": "Max number of events to return (default 100)"
+                }));
+                props
+            },
+            required: vec![],
+        },
+        handler: |args, app| Box::pin(async move {
+            let since = args
+                .and_then(|a| a.get("since")?.as_u64())
+                .unwrap_or(0);
+            let max = args
+                .and_then(|a| a.get("max")?.as_u64())
+                .unwrap_or(100);
+            let script = format!(
+                r#"return (function(){{
+  const key = "__MCP_EVENT_WATCH__";
+  if (!window[key]) {{
+    const state = {{ seq: 0, events: [] }};
+    const push = (type, target) => {{
+      const tag = target && target.tagName ? target.tagName.toLowerCase() : null;
+      const idAttr = target && target.id ? target.id : null;
+      const nameAttr = target && target.getAttribute ? target.getAttribute("name") : null;
+      const ariaLabel = target && target.getAttribute ? target.getAttribute("aria-label") : null;
+      const classList = target && target.className ? String(target.className).split(/\\s+/).slice(0, 4) : [];
+      const entry = {{
+        id: ++state.seq,
+        type,
+        tag,
+        id: idAttr,
+        name: nameAttr,
+        classes: classList,
+        ariaLabel
+      }};
+      state.events.push(entry);
+      if (state.events.length > 500) {{
+        state.events = state.events.slice(-500);
+      }}
+    }};
+    document.addEventListener("click", (e) => push("click", e.target), true);
+    document.addEventListener("submit", (e) => push("submit", e.target), true);
+    document.addEventListener("change", (e) => push("change", e.target), true);
+    document.addEventListener("input", (e) => push("input", e.target), true);
+    window[key] = state;
+  }}
+  const state = window[key];
+  const since = {since};
+  const max = {max};
+  let events = state.events.filter((e) => e.id > since);
+  if (max > 0 && events.length > max) {{
+    events = events.slice(-max);
+  }}
+  return {{ lastId: state.seq, events, url: location.href, title: document.title }};
+}})();"#,
+                since = since,
+                max = max
+            );
+            let result = eval_with_result(app, &script, 10000).await?;
+            Ok(serde_json::json!({ "success": true, "result": result }))
         }),
     });
 
