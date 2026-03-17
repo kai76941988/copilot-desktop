@@ -12,7 +12,18 @@ function matchesAuthUrl(url, baseUrl = window.location.href) {
     const oauthPatterns = [
       /accounts\.google\.com/,
       /accounts\.google\.[a-z]+/,
-      /login\.microsoftonline\.com/,
+      /microsoftonline\.[a-z.]+/,
+      /microsoftonline-p\.com/,
+      /login\.microsoft\.com/,
+      /login\.windows\.net/,
+      /login\.live\.com/,
+      /account\.live\.com/,
+      /msauth\.net/,
+      /msftauth\.net/,
+      /msauthimages\.net/,
+      /msftauthimages\.net/,
+      /aadcdn\.msauth\.net/,
+      /aadcdn\.msftauth\.net/,
       /github\.com\/login/,
       /facebook\.com\/.*\/dialog/,
       /twitter\.com\/oauth/,
@@ -53,16 +64,28 @@ function isAuthLink(url) {
 function isAuthPopup(url, name) {
   // Check for known authentication window names
   const authWindowNames = [
-    "AppleAuthentication",
+    "appleauthentication",
     "oauth2",
     "oauth",
     "google-auth",
     "auth-popup",
     "signin",
     "login",
+    "msal",
+    "msalv2",
+    "microsoft",
+    "aad",
+    "msauth",
+    "microsoftauth",
+    "wlid",
+    "live",
   ];
 
-  if (authWindowNames.includes(name)) {
+  const normalizedName = (name || "").toLowerCase();
+  if (
+    normalizedName &&
+    authWindowNames.some((item) => normalizedName.includes(item))
+  ) {
     return true;
   }
 

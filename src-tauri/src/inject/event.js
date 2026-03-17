@@ -677,10 +677,21 @@ document.addEventListener("DOMContentLoaded", () => {
       return originalWindowOpen.call(window, url, name, specs);
     }
 
+    // Allow blank popups (some auth flows open about:blank first)
+    const urlString = (url || "").toString();
+    if (!urlString || urlString.startsWith("about:")) {
+      return originalWindowOpen.call(window, url, name, specs);
+    }
+
     try {
       const baseUrl = window.location.origin + window.location.pathname;
       const hrefUrl = new URL(url, baseUrl);
       const absoluteUrl = hrefUrl.href;
+
+      // Allow auth links to open inside the app even if not in internal regex
+      if (window.isAuthLink(absoluteUrl)) {
+        return originalWindowOpen.call(window, absoluteUrl, name, specs);
+      }
 
       if (!isInternalUrl(absoluteUrl)) {
         if (forceInternalNavigation) {

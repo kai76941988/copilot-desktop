@@ -21,7 +21,7 @@
       "maximize": false,
       "start_to_tray": false,
       "force_internal_navigation": false,
-      "internal_url_regex": "^https://([\\w-]+\\.)?(copilot\\.microsoft\\.com|microsoftonline\\.com|live\\.com|office\\.com|microsoft\\.com)(/|$)",
+      "internal_url_regex": "^https?://([\\w-]+\\.)*(copilot\\.microsoft\\.com|microsoftonline\\.(com|cn|us|de)|microsoftonline-p\\.com|login\\.microsoft\\.com|login\\.windows\\.net|live\\.com|office\\.com|microsoft\\.com|msauth\\.net|msftauth\\.net|msauthimages\\.net|msftauthimages\\.net)(/|$)",
       "new_window": true,
       "zoom": 100
     }
