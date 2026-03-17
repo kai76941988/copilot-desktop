@@ -1,7 +1,7 @@
 {
   "windows": [
     {
-      "url": "https://copilot.microsoft.com/",
+      "url": "https://m365.cloud.microsoft/",
       "url_type": "web",
       "hide_title_bar": false,
       "fullscreen": false,
@@ -21,8 +21,8 @@
       "maximize": false,
       "start_to_tray": false,
       "force_internal_navigation": false,
-      "internal_url_regex": "",
-      "new_window": false,
+      "internal_url_regex": "^https://([\\w-]+\\.)?(m365\\.cloud\\.microsoft|microsoftonline\\.com|live\\.com|office\\.com|microsoft\\.com)(/|$)",
+      "new_window": true,
       "zoom": 100
     }
   ],
@@ -36,7 +36,7 @@
     "linux": true,
     "windows": true
   },
-  "system_tray_path": "png/copilot_1.ico",
+  "system_tray_path": "png/programmusic_256.ico",
   "inject": [],
   "proxy_url": "",
   "multi_instance": false,
