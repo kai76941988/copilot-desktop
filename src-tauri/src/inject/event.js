@@ -674,7 +674,13 @@ document.addEventListener("DOMContentLoaded", () => {
   window.open = function (url, name, specs) {
     // Allow authentication popups to open normally
     if (window.isAuthPopup(url, name)) {
-      return originalWindowOpen.call(window, url, name, specs);
+      const popup = originalWindowOpen.call(window, url, name, specs);
+      const urlString = (url || "").toString();
+      if (!popup && urlString && !urlString.startsWith("about:")) {
+        // Fallback to full-page navigation if popup was blocked
+        window.location.href = urlString;
+      }
+      return popup;
     }
 
     // Allow blank popups (some auth flows open about:blank first)
@@ -690,7 +696,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Allow auth links to open inside the app even if not in internal regex
       if (window.isAuthLink(absoluteUrl)) {
-        return originalWindowOpen.call(window, absoluteUrl, name, specs);
+        const popup = originalWindowOpen.call(window, absoluteUrl, name, specs);
+        if (!popup) {
+          // Fallback to full-page navigation if popup was blocked
+          window.location.href = absoluteUrl;
+        }
+        return popup;
       }
 
       if (!isInternalUrl(absoluteUrl)) {

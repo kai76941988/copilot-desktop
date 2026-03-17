@@ -336,9 +336,24 @@ window.addEventListener("DOMContentLoaded", (_event) => {
       padding-top: 36px;
     }
   `;
-  const contentStyleElement = document.createElement("style");
-  contentStyleElement.innerHTML = contentCSS;
-  document.head.appendChild(contentStyleElement);
+  // Avoid hiding auth UI / modal content on Microsoft login and Copilot domains.
+  const hostname = window.location.hostname.toLowerCase();
+  const isCopilotHost = hostname === "copilot.microsoft.com";
+  const isMicrosoftAuthHost =
+    hostname.includes("microsoftonline.") ||
+    hostname.includes("login.microsoft.") ||
+    hostname.includes("login.live.") ||
+    hostname.includes("login.windows.") ||
+    hostname.includes("account.live.") ||
+    hostname.includes("msauth.") ||
+    hostname.includes("msftauth.") ||
+    hostname.includes("aadcdn.");
+
+  if (!isCopilotHost && !isMicrosoftAuthHost) {
+    const contentStyleElement = document.createElement("style");
+    contentStyleElement.innerHTML = contentCSS;
+    document.head.appendChild(contentStyleElement);
+  }
 
   const copilotLayoutCSS = `
     @media (max-width: 1400px) {
@@ -395,7 +410,6 @@ window.addEventListener("DOMContentLoaded", (_event) => {
   `;
 
   try {
-    const hostname = window.location.hostname.toLowerCase();
     const pathname = window.location.pathname.toLowerCase();
     const htmlEl = document.documentElement;
     if (hostname === "copilot.microsoft.com") {
