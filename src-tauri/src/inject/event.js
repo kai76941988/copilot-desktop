@@ -577,9 +577,21 @@ document.addEventListener("DOMContentLoaded", () => {
       const absoluteUrl = hrefUrl.href;
       let filename = anchorElement.download || getFilenameFromUrl(absoluteUrl);
 
-      // Early check: Allow OAuth/authentication links to navigate naturally
+      // Early check: Handle OAuth/authentication links inside the app
       if (window.isAuthLink(absoluteUrl)) {
         console.log("[Pake] Allowing OAuth navigation to:", absoluteUrl);
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const popup = originalWindowOpen.call(
+          window,
+          absoluteUrl,
+          "_blank",
+          "width=1200,height=800,scrollbars=yes,resizable=yes",
+        );
+        if (!popup) {
+          // Fallback to full-page navigation if popup was blocked
+          window.location.href = absoluteUrl;
+        }
         return;
       }
 
