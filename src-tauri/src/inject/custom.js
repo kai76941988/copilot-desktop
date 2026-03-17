@@ -5,7 +5,10 @@
     );
     if (!HOST_OK) return;
 
-    const DEBUG = true;
+    const DEBUG =
+      window.__PAKE_DEBUG_AUTH__ !== undefined
+        ? window.__PAKE_DEBUG_AUTH__
+        : true;
     const TAG = "[CopilotOverlayFix]";
 
     const MAIN_READY_SELECTORS = [
@@ -18,6 +21,66 @@
       '[class*="prompt"]',
       "main",
       "#root main",
+    ];
+
+    const LOGGED_IN_SELECTORS = [
+      '[data-testid*="profile"]',
+      '[data-testid*="account"]',
+      '[data-testid*="user"]',
+      '[data-testid*="settings"]',
+      '[aria-label*="Account"]',
+      '[aria-label*="Profile"]',
+      '[aria-label*="Settings"]',
+      '[aria-label*="Sign out"]',
+      '[aria-label*="Log out"]',
+      '[aria-label*="New chat"]',
+      '[aria-label*="New conversation"]',
+      '[aria-label*="New thread"]',
+      'img[alt*="avatar"]',
+      'img[alt*="profile"]',
+      '[class*="avatar"] img',
+      '[class*="profile"] img',
+    ];
+
+    const LOGGED_OUT_SELECTORS = [
+      'a[href*="login"]',
+      'a[href*="signin"]',
+      'a[href*="sign-in"]',
+      'a[href*="signup"]',
+      'button[aria-label*="Sign in"]',
+      'button[aria-label*="Log in"]',
+      'button[aria-label*="Sign up"]',
+    ];
+
+    const LOGGED_IN_TEXT_PATTERNS = [
+      /new chat/i,
+      /new conversation/i,
+      /new thread/i,
+      /profile/i,
+      /account/i,
+      /settings/i,
+      /sign out/i,
+      /log out/i,
+      /logout/i,
+      /personalize/i,
+      /my account/i,
+      /我的/i,
+      /账户/i,
+      /设置/i,
+      /退出/i,
+      /新建/i,
+      /新聊天/i,
+    ];
+
+    const LOGGED_OUT_TEXT_PATTERNS = [
+      /sign in/i,
+      /log in/i,
+      /login/i,
+      /sign up/i,
+      /get started/i,
+      /use copilot/i,
+      /登录/i,
+      /注册/i,
     ];
 
     const DIRECT_OVERLAY_SELECTORS = [
@@ -38,6 +101,8 @@
       '[id*="spinner"]',
     ];
 
+    let mainReadySince = 0;
+
     function log(...args) {
       if (DEBUG) console.log(TAG, ...args);
     }
@@ -53,14 +118,89 @@
       return true;
     }
 
-    function getMainReadyElement() {
-      for (const sel of MAIN_READY_SELECTORS) {
+    function findVisibleBySelectors(selectors) {
+      for (const sel of selectors) {
         const list = Array.from(document.querySelectorAll(sel));
         for (const el of list) {
           if (isVisible(el)) return el;
         }
       }
       return null;
+    }
+
+    function findVisibleTextMatch(patterns) {
+      const nodes = Array.from(document.querySelectorAll("button, a, span, div"));
+      for (const el of nodes) {
+        if (!isVisible(el)) continue;
+        const text = (el.innerText || "").trim();
+        if (!text) continue;
+        if (patterns.some((p) => p.test(text))) return el;
+      }
+      return null;
+    }
+
+    function getMainReadyElement() {
+      return findVisibleBySelectors(MAIN_READY_SELECTORS);
+    }
+
+    function isMainUiVisible() {
+      return !!getMainReadyElement();
+    }
+
+    function getInputElement() {
+      return (
+        findVisibleBySelectors([
+          "textarea",
+          'div[contenteditable="true"]',
+          'div[role="textbox"]',
+          '[data-testid*="composer"] textarea',
+          '[data-testid*="prompt"] textarea',
+        ]) || null
+      );
+    }
+
+    function isLoggedInUiReady() {
+      const mainEl = getMainReadyElement();
+      if (!mainEl) {
+        mainReadySince = 0;
+        return false;
+      }
+
+      const loggedOutEl =
+        findVisibleBySelectors(LOGGED_OUT_SELECTORS) ||
+        findVisibleTextMatch(LOGGED_OUT_TEXT_PATTERNS);
+      if (loggedOutEl) {
+        mainReadySince = 0;
+        return false;
+      }
+
+      const loggedInEl =
+        findVisibleBySelectors(LOGGED_IN_SELECTORS) ||
+        findVisibleTextMatch(LOGGED_IN_TEXT_PATTERNS);
+      if (loggedInEl) return true;
+
+      // Fallback: main UI + enabled input for a short period
+      const inputEl = getInputElement();
+      const inputEnabled =
+        inputEl &&
+        !inputEl.disabled &&
+        inputEl.getAttribute("aria-disabled") !== "true" &&
+        !inputEl.readOnly;
+
+      if (inputEnabled) {
+        if (!mainReadySince) mainReadySince = Date.now();
+        if (Date.now() - mainReadySince > 5000) return true;
+      } else {
+        mainReadySince = 0;
+      }
+
+      return false;
+    }
+
+    function shouldCleanupOverlay() {
+      const mainReady = isMainUiVisible();
+      const loggedIn = isLoggedInUiReady();
+      return mainReady && loggedIn;
     }
 
     function safeUnlockElement(el) {
@@ -90,7 +230,6 @@
 
       rootCandidates.forEach(safeUnlockElement);
 
-      // Some frameworks lock body/html scrolling; restore when main UI is ready.
       try {
         document.documentElement.style.setProperty("overflow", "auto", "important");
         document.body.style.setProperty("overflow", "auto", "important");
@@ -201,7 +340,6 @@
 
     function removeKnownOverlays(mainEl) {
       let changed = 0;
-
       for (const sel of DIRECT_OVERLAY_SELECTORS) {
         const nodes = Array.from(document.querySelectorAll(sel));
         for (const el of nodes) {
@@ -210,14 +348,12 @@
           if (hideElement(el, `direct-selector:${sel}`)) changed++;
         }
       }
-
       return changed;
     }
 
     function sweepBlockingLayers(mainEl) {
       let changed = 0;
       const all = Array.from(document.body.querySelectorAll("*"));
-
       for (const el of all) {
         if (isLikelyBlockingOverlay(el, mainEl)) {
           if (hideElement(el, "blocking-overlay")) changed++;
@@ -225,7 +361,6 @@
           if (hideElement(el, "center-spinner")) changed++;
         }
       }
-
       return changed;
     }
 
@@ -256,23 +391,39 @@
     }
 
     function cleanupOnce(reason) {
-      const mainEl = getMainReadyElement();
+      const mainReady = isMainUiVisible();
+      const loggedInReady = isLoggedInUiReady();
+      const allowCleanup = shouldCleanupOverlay();
 
-      // Do nothing if main UI is not ready to avoid breaking login dialogs.
-      if (!mainEl) {
-        log("skip cleanup, main not ready yet:", reason);
+      log("status", {
+        reason,
+        url: window.location.href,
+        mainReady,
+        loggedInReady,
+        allowCleanup,
+      });
+
+      if (!mainReady) {
+        log("skip cleanup, main UI not ready:", reason);
+        return 0;
+      }
+      if (!loggedInReady) {
+        log("skip cleanup, logged-in UI not ready:", reason);
+        return 0;
+      }
+      if (!allowCleanup) {
+        log("skip cleanup, gate not satisfied:", reason);
         return 0;
       }
 
-      let changed = 0;
+      const mainEl = getMainReadyElement();
+      if (!mainEl) return 0;
 
+      let changed = 0;
       unlockPageInteraction();
       removeBodyLevelLocks();
-
       changed += removeKnownOverlays(mainEl);
       changed += sweepBlockingLayers(mainEl);
-
-      // Ensure the page stays interactive after cleanup.
       unlockPageInteraction();
       removeBodyLevelLocks();
 
@@ -299,13 +450,10 @@
 
     function startHighFreqRetry(label) {
       if (highFreqTimer) clearInterval(highFreqTimer);
-
       let count = 0;
       highFreqTimer = setInterval(() => {
         count++;
         guardedCleanup(`${label}:hf:${count}`);
-
-        // High-frequency checks for the first 15 seconds.
         if (count >= 30) {
           clearInterval(highFreqTimer);
           highFreqTimer = null;
@@ -345,11 +493,9 @@
 
     function startObserver() {
       if (observer) observer.disconnect();
-
       observer = new MutationObserver(() => {
         guardedCleanup("mutation");
       });
-
       observer.observe(document.documentElement || document.body, {
         childList: true,
         subtree: true,
@@ -360,11 +506,8 @@
 
     function init() {
       log("init");
-
       hookHistory();
       startObserver();
-
-      // Immediate attempt.
       guardedCleanup("init");
       startHighFreqRetry("init");
       startLowFreqRetry();
@@ -406,13 +549,18 @@
         startHighFreqRetry("DOMContentLoaded");
       });
 
-      // Extra tolerance for async rendering after login.
       setTimeout(() => guardedCleanup("t+1200"), 1200);
       setTimeout(() => guardedCleanup("t+2500"), 2500);
       setTimeout(() => guardedCleanup("t+4000"), 4000);
       setTimeout(() => guardedCleanup("t+7000"), 7000);
       setTimeout(() => guardedCleanup("t+12000"), 12000);
     }
+
+    window.pakeOverlayFix = {
+      isMainUiVisible,
+      isLoggedInUiReady,
+      shouldCleanupOverlay,
+    };
 
     init();
   } catch (e) {

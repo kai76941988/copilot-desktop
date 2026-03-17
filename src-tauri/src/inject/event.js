@@ -332,6 +332,14 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("[Pake] Invalid internal_url_regex pattern:", e);
     }
   }
+  const auth = window.pakeAuth || {};
+  const DEBUG_AUTH =
+    window.__PAKE_DEBUG_AUTH__ !== undefined
+      ? window.__PAKE_DEBUG_AUTH__
+      : true;
+  const authLog = (...args) => {
+    if (DEBUG_AUTH) console.log("[PakeAuthNav]", ...args);
+  };
 
   // 全屏状态变化监听器 - 修复全屏时缩放问题
   document.addEventListener("fullscreenchange", () => {
@@ -550,6 +558,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Check if URL should be treated as internal based on regex pattern or domain
   const isInternalUrl = (url) => {
+    // Auth/internal allowlist should always win
+    if (auth.isInternalAllowedUrl && auth.isInternalAllowedUrl(url)) {
+      return true;
+    }
     // If regex pattern is configured, use it as the primary check
     if (internalUrlPattern) {
       try {
@@ -577,27 +589,38 @@ document.addEventListener("DOMContentLoaded", () => {
       const absoluteUrl = hrefUrl.href;
       let filename = anchorElement.download || getFilenameFromUrl(absoluteUrl);
 
-      // Early check: Handle OAuth/authentication links inside the app
-      if (window.isAuthLink(absoluteUrl)) {
-        console.log("[Pake] Allowing OAuth navigation to:", absoluteUrl);
+      const isAuthUrl =
+        (auth.isMicrosoftAuthUrl && auth.isMicrosoftAuthUrl(absoluteUrl)) ||
+        (auth.isCopilotUrl && auth.isCopilotUrl(absoluteUrl)) ||
+        (window.isAuthLink && window.isAuthLink(absoluteUrl));
+      const forceSameWindow =
+        (auth.shouldForceSameWindowAuth &&
+          auth.shouldForceSameWindowAuth(absoluteUrl)) ||
+        isAuthUrl;
+      const internalCheck = isInternalUrl(absoluteUrl);
+      authLog("click", {
+        url: absoluteUrl,
+        target: anchorElement.target || "_self",
+        isAuthUrl,
+        isInternal: internalCheck,
+      });
+
+      // Force auth/callback flows to stay in the same webview context
+      if (forceSameWindow) {
+        authLog("anchor auth -> same window", {
+          url: absoluteUrl,
+          target: anchorElement.target || "_self",
+        });
         e.preventDefault();
         e.stopImmediatePropagation();
-        const popup = originalWindowOpen.call(
-          window,
-          absoluteUrl,
-          "_blank",
-          "width=1200,height=800,scrollbars=yes,resizable=yes",
-        );
-        if (!popup) {
-          // Fallback to full-page navigation if popup was blocked
-          window.location.href = absoluteUrl;
-        }
+        window.location.href = absoluteUrl;
         return;
       }
 
       // Handle _blank links: same domain navigates in-app, cross-domain opens new window
       if (target === "_blank") {
         if (forceInternalNavigation) {
+          authLog("link _blank forced internal -> same window", absoluteUrl);
           e.preventDefault();
           e.stopImmediatePropagation();
           window.location.href = absoluteUrl;
@@ -605,10 +628,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (isInternalUrl(absoluteUrl)) {
+          authLog("link _blank internal", absoluteUrl);
           // For internal links (based on regex or domain), let the browser handle it naturally
           return;
         }
 
+        authLog("link _blank external -> popup/shell", absoluteUrl);
         e.preventDefault();
         e.stopImmediatePropagation();
         const newWindow = originalWindowOpen.call(
@@ -623,12 +648,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (target === "_new") {
         if (forceInternalNavigation) {
+          authLog("link _new forced internal -> same window", absoluteUrl);
           e.preventDefault();
           e.stopImmediatePropagation();
           window.location.href = absoluteUrl;
           return;
         }
 
+        authLog("link _new external -> shell", absoluteUrl);
         e.preventDefault();
         handleExternalLink(absoluteUrl);
         return;
@@ -653,14 +680,17 @@ document.addEventListener("DOMContentLoaded", () => {
         // Optimization: Allow previewable media to be handled by the app/browser directly
         // This fixes issues where CDN links are treated as external
         if (isPreviewableMedia(absoluteUrl)) {
+          authLog("link _self previewable media", absoluteUrl);
           return;
         }
 
         if (!isInternalUrl(absoluteUrl)) {
           if (forceInternalNavigation) {
+            authLog("link _self forced internal", absoluteUrl);
             return;
           }
 
+          authLog("link _self external -> popup/shell", absoluteUrl);
           e.preventDefault();
           e.stopImmediatePropagation();
           const newWindow = originalWindowOpen.call(
@@ -684,20 +714,13 @@ document.addEventListener("DOMContentLoaded", () => {
   // Rewrite the window.open function.
   const originalWindowOpen = window.open;
   window.open = function (url, name, specs) {
-    // Allow authentication popups to open normally
-    if (window.isAuthPopup(url, name)) {
-      const popup = originalWindowOpen.call(window, url, name, specs);
-      const urlString = (url || "").toString();
-      if (!popup && urlString && !urlString.startsWith("about:")) {
-        // Fallback to full-page navigation if popup was blocked
-        window.location.href = urlString;
-      }
-      return popup;
-    }
-
     // Allow blank popups (some auth flows open about:blank first)
     const urlString = (url || "").toString();
     if (!urlString || urlString.startsWith("about:")) {
+      if (auth.isAuthPopupName && auth.isAuthPopupName(name)) {
+        authLog("window.open blank auth -> same window", { name });
+        return window;
+      }
       return originalWindowOpen.call(window, url, name, specs);
     }
 
@@ -706,11 +729,28 @@ document.addEventListener("DOMContentLoaded", () => {
       const hrefUrl = new URL(url, baseUrl);
       const absoluteUrl = hrefUrl.href;
 
-      // Allow auth links to open inside the app even if not in internal regex
-      if (window.isAuthLink(absoluteUrl)) {
+      const isAuthUrl =
+        (auth.isMicrosoftAuthUrl && auth.isMicrosoftAuthUrl(absoluteUrl)) ||
+        (auth.isCopilotUrl && auth.isCopilotUrl(absoluteUrl)) ||
+        (window.isAuthLink && window.isAuthLink(absoluteUrl));
+      const forceSameWindow =
+        (auth.shouldForceSameWindowAuth &&
+          auth.shouldForceSameWindowAuth(absoluteUrl)) ||
+        isAuthUrl;
+
+      if (forceSameWindow) {
+        authLog("window.open auth -> same window", {
+          url: absoluteUrl,
+          name,
+        });
+        window.location.href = absoluteUrl;
+        return window;
+      }
+
+      // Allow non-Microsoft auth popups to open normally
+      if (window.isAuthPopup && window.isAuthPopup(absoluteUrl, name)) {
         const popup = originalWindowOpen.call(window, absoluteUrl, name, specs);
         if (!popup) {
-          // Fallback to full-page navigation if popup was blocked
           window.location.href = absoluteUrl;
         }
         return popup;
@@ -718,15 +758,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (!isInternalUrl(absoluteUrl)) {
         if (forceInternalNavigation) {
+          authLog("window.open external but forced internal", absoluteUrl);
           return originalWindowOpen.call(window, absoluteUrl, name, specs);
         }
 
+        authLog("window.open external -> shell", absoluteUrl);
         handleExternalLink(absoluteUrl);
         return null;
       }
 
+      authLog("window.open internal", absoluteUrl);
       return originalWindowOpen.call(window, absoluteUrl, name, specs);
     } catch (error) {
+      authLog("window.open error fallback", { url, error });
       return originalWindowOpen.call(window, url, name, specs);
     }
   };
