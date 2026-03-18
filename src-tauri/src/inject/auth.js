@@ -135,7 +135,25 @@
   }
 
   function shouldForceSameWindowAuth(url) {
-    return isMicrosoftAuthUrl(url);
+    return isMicrosoftAuthUrl(url) || isCopilotUrl(url);
+  }
+
+  function normalizeUrl(input, baseUrl = window.location.href) {
+    const u = toUrl(input, baseUrl);
+    return u ? u.href : "";
+  }
+
+  function getUrlInfo(input, baseUrl = window.location.href) {
+    const u = toUrl(input, baseUrl);
+    if (!u) return null;
+    return {
+      href: u.href,
+      host: u.host,
+      hostname: u.hostname.toLowerCase(),
+      pathname: u.pathname.toLowerCase(),
+      search: u.search,
+      hash: u.hash,
+    };
   }
 
   function matchesAuthUrl(url, baseUrl = window.location.href) {
@@ -183,6 +201,8 @@
 
   // Expose helpers for other inject scripts
   window.pakeAuth = {
+    normalizeUrl,
+    getUrlInfo,
     isCopilotUrl,
     isMicrosoftAuthUrl,
     isInternalAllowedUrl,
@@ -190,6 +210,8 @@
     isAuthPopupName,
   };
 
+  window.normalizeUrl = normalizeUrl;
+  window.getUrlInfo = getUrlInfo;
   window.isCopilotUrl = isCopilotUrl;
   window.isMicrosoftAuthUrl = isMicrosoftAuthUrl;
   window.isInternalAllowedUrl = isInternalAllowedUrl;
