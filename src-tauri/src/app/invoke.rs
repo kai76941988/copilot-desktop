@@ -4,7 +4,7 @@ use crate::memory::{
     MemoryContinueParams, MemoryListMessagesParams, MemoryListSessionsParams,
     MemoryListSummariesParams, MemoryProjectInfo, MemoryRecordMessageParams, MemorySearchParams,
     MemorySearchItem, MemorySearchSummariesParams, MemorySessionInfo, MemorySetProjectParams,
-    MemorySummaryInfo, MemoryMessageInfo,
+    MemorySummaryInfo, MemoryMessageInfo, SummarizerConfig, MemoryRefreshSummariesParams,
 };
 use serde_json::json;
 use crate::util::{check_file_or_append, get_download_message_with_lang, show_toast, MessageType};
@@ -201,6 +201,9 @@ pub fn memory_continue_project(app: AppHandle, params: MemoryContinueParams) -> 
     )?;
 
     if let Some(window) = app.get_webview_window("pake") {
+        if let Some(project_id) = params.project_id.clone() {
+            let _ = window.emit("memory_set_project", json!({ "project_id": project_id }));
+        }
         let _ = window.show();
         let _ = window.set_focus();
         let payload = json!({
@@ -242,6 +245,27 @@ pub fn memory_list_messages(
     params: MemoryListMessagesParams,
 ) -> Result<Vec<MemoryMessageInfo>, String> {
     memory_db::list_messages(&app, params)
+}
+
+#[command]
+pub fn memory_get_summarizer_config(app: AppHandle) -> Result<SummarizerConfig, String> {
+    memory_db::get_summarizer_config(&app)
+}
+
+#[command]
+pub fn memory_set_summarizer_config(
+    app: AppHandle,
+    params: SummarizerConfig,
+) -> Result<(), String> {
+    memory_db::set_summarizer_config(&app, params)
+}
+
+#[command]
+pub async fn memory_refresh_summaries(
+    app: AppHandle,
+    params: MemoryRefreshSummariesParams,
+) -> Result<(), String> {
+    memory_db::refresh_summaries(&app, params).await
 }
 
 #[command]

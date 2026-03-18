@@ -47,6 +47,31 @@
 
           <div class="panel">
             <div class="panel-header">
+              <div class="panel-title">Summarizer</div>
+              <div class="panel-actions">
+                <button id="btnSaveSummarizer">Save</button>
+                <button id="btnRunSummarizer">Run Now</button>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label>Mode</label>
+              <select id="summarizerMode">
+                <option value="rule">rule (local)</option>
+                <option value="remote">remote (LLM)</option>
+              </select>
+              <label>Endpoint</label>
+              <input id="summarizerEndpoint" placeholder="https://your-llm-endpoint" />
+              <label>API Key</label>
+              <input id="summarizerApiKey" type="password" placeholder="optional" />
+              <label>Model</label>
+              <input id="summarizerModel" placeholder="model name (optional)" />
+              <label>Prompt</label>
+              <textarea id="summarizerPrompt" placeholder="summarizer prompt"></textarea>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
               <div class="panel-title">Session Messages</div>
               <div class="panel-actions">
                 <button id="btnLoadMore">Load More</button>

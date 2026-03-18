@@ -18,6 +18,11 @@ const elSearchProjectOnly = document.getElementById("searchProjectOnly");
 const elProjectSummary = document.getElementById("projectSummary");
 const elSummaryList = document.getElementById("summaryList");
 const elMessageList = document.getElementById("messageList");
+const elSummarizerMode = document.getElementById("summarizerMode");
+const elSummarizerEndpoint = document.getElementById("summarizerEndpoint");
+const elSummarizerApiKey = document.getElementById("summarizerApiKey");
+const elSummarizerModel = document.getElementById("summarizerModel");
+const elSummarizerPrompt = document.getElementById("summarizerPrompt");
 
 let messageOffset = 0;
 const messageLimit = 40;
@@ -163,6 +168,7 @@ async function loadProjects() {
   await loadSessions();
   await loadSummaries();
   await loadMessages(false);
+  await loadSummarizerConfig();
   setStatus("Ready");
 }
 
@@ -215,6 +221,45 @@ async function loadMessages(append) {
   });
   renderMessages(items || [], append);
   messageOffset += messageLimit;
+}
+
+async function loadSummarizerConfig() {
+  if (!invoke) return;
+  try {
+    const cfg = await invoke("memory_get_summarizer_config");
+    elSummarizerMode.value = cfg.mode || "rule";
+    elSummarizerEndpoint.value = cfg.endpoint || "";
+    elSummarizerApiKey.value = cfg.api_key || "";
+    elSummarizerModel.value = cfg.model || "";
+    elSummarizerPrompt.value = cfg.prompt || "";
+  } catch (e) {
+    console.warn("load summarizer config failed", e);
+  }
+}
+
+async function saveSummarizerConfig() {
+  if (!invoke) return;
+  const cfg = {
+    mode: elSummarizerMode.value,
+    endpoint: elSummarizerEndpoint.value || null,
+    api_key: elSummarizerApiKey.value || null,
+    model: elSummarizerModel.value || null,
+    prompt: elSummarizerPrompt.value || null,
+    timeout_ms: 15000,
+  };
+  await invoke("memory_set_summarizer_config", cfg);
+  setStatus("Summarizer config saved");
+}
+
+async function runSummarizer() {
+  if (!invoke || !state.selectedProjectId) return;
+  setStatus("Running summarizer...");
+  await invoke("memory_refresh_summaries", {
+    project_id: state.selectedProjectId,
+    session_id: state.selectedSessionId,
+  });
+  await loadSummaries();
+  setStatus("Summaries refreshed");
 }
 
 async function selectProject(projectId) {
@@ -305,6 +350,8 @@ document.getElementById("btnSetActive").onclick = setActiveProject;
 document.getElementById("btnSearch").onclick = doSearch;
 document.getElementById("btnRefreshSummary").onclick = loadSummaries;
 document.getElementById("btnLoadMore").onclick = () => loadMessages(true);
+document.getElementById("btnSaveSummarizer").onclick = saveSummarizerConfig;
+document.getElementById("btnRunSummarizer").onclick = runSummarizer;
 elSearchInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     doSearch();

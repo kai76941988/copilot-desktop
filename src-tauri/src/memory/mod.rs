@@ -74,6 +74,22 @@ pub struct MemorySetProjectParams {
     pub project_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MemoryRefreshSummariesParams {
+    pub project_id: Option<String>,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SummarizerConfig {
+    pub mode: String,
+    pub endpoint: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+    pub prompt: Option<String>,
+    pub timeout_ms: Option<u64>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MemoryProjectInfo {
     pub project_id: String,

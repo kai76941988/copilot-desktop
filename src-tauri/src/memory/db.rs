@@ -2,7 +2,7 @@ use crate::memory::{
     MemoryCreateProjectParams, MemoryGetContextPackParams, MemoryListSessionsParams,
     MemoryListMessagesParams, MemoryListSummariesParams, MemoryMessageInfo, MemoryProjectInfo,
     MemoryRecordMessageParams, MemorySearchItem, MemorySearchParams, MemorySearchSummariesParams,
-    MemorySessionInfo, MemorySummaryInfo,
+    MemorySessionInfo, MemorySummaryInfo, MemoryRefreshSummariesParams, SummarizerConfig,
 };
 use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
+use tauri_plugin_http::reqwest::ClientBuilder;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -215,6 +216,11 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             created_at INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, updated_at);
@@ -240,6 +246,37 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("Init schema failed: {}", e))?;
     Ok(())
+}
+
+fn get_setting(conn: &Connection, key: &str) -> Result<Option<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT value FROM settings WHERE key = ?")
+        .map_err(|e| format!("Prepare get setting failed: {}", e))?;
+    let row = stmt
+        .query_row(params![key], |r| r.get::<_, String>(0))
+        .optional()
+        .map_err(|e| format!("Query setting failed: {}", e))?;
+    Ok(row)
+}
+
+fn set_setting(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        params![key, value],
+    )
+    .map_err(|e| format!("Set setting failed: {}", e))?;
+    Ok(())
+}
+
+fn default_summarizer_config() -> SummarizerConfig {
+    SummarizerConfig {
+        mode: "rule".to_string(),
+        endpoint: None,
+        api_key: None,
+        model: None,
+        prompt: Some("Summarize the conversation into concise bullets. Keep factual, include decisions, progress, TODOs, constraints.".to_string()),
+        timeout_ms: Some(15000),
+    }
 }
 
 fn ensure_project(conn: &Connection, project_id: &str, ts: i64) -> Result<(), String> {
@@ -530,6 +567,51 @@ fn build_project_struct_summary(
     Ok(summary)
 }
 
+fn get_latest_session_id(conn: &Connection, project_id: &str) -> Result<Option<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT session_id FROM sessions
+             WHERE project_id = ?
+             ORDER BY updated_at DESC
+             LIMIT 1",
+        )
+        .map_err(|e| format!("Prepare latest session failed: {}", e))?;
+    let row = stmt
+        .query_row(params![project_id], |r| r.get::<_, String>(0))
+        .optional()
+        .map_err(|e| format!("Query latest session failed: {}", e))?;
+    Ok(row)
+}
+
+fn fetch_recent_project_messages(
+    conn: &Connection,
+    project_id: &str,
+    limit: i64,
+) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT role, content
+             FROM messages
+             WHERE project_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| format!("Prepare project messages failed: {}", e))?;
+
+    let rows = stmt
+        .query_map(params![project_id, limit], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(|e| format!("Query project messages failed: {}", e))?;
+
+    let mut out: Vec<(String, String)> = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+    }
+    out.reverse();
+    Ok(out)
+}
+
 fn maybe_update_summaries(
     conn: &Connection,
     project_id: &str,
@@ -608,6 +690,52 @@ fn maybe_update_summaries(
     Ok(())
 }
 
+fn refresh_rule_summaries(
+    conn: &Connection,
+    project_id: &str,
+    session_id: &str,
+) -> Result<(), String> {
+    let session_summary = build_session_summary(conn, project_id, session_id)?;
+    upsert_summary(
+        conn,
+        project_id,
+        Some(session_id),
+        "session",
+        &session_summary,
+        None,
+        None,
+    )?;
+
+    if let Ok(struct_summary) = build_project_struct_summary(conn, project_id, session_id) {
+        if let Ok(json) = serde_json::to_string(&struct_summary) {
+            let _ = upsert_summary(conn, project_id, None, "project_struct", &json, None, None);
+        }
+        let project_text = project_struct_to_text(&struct_summary);
+        upsert_summary(
+            conn,
+            project_id,
+            None,
+            "project",
+            &project_text,
+            None,
+            None,
+        )?;
+    } else {
+        let project_summary = build_project_summary(conn, project_id)?;
+        upsert_summary(
+            conn,
+            project_id,
+            None,
+            "project",
+            &project_summary,
+            None,
+            None,
+        )?;
+    }
+
+    Ok(())
+}
+
 pub fn record_message(app: &AppHandle, params: MemoryRecordMessageParams) -> Result<(), String> {
     let conn = open_connection(app)?;
     init_schema(&conn)?;
@@ -662,6 +790,25 @@ pub fn record_message(app: &AppHandle, params: MemoryRecordMessageParams) -> Res
 
     let _ = maybe_update_summaries(&conn, &project_id, &session_id);
 
+    Ok(())
+}
+
+pub fn get_summarizer_config(app: &AppHandle) -> Result<SummarizerConfig, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+    if let Some(raw) = get_setting(&conn, "summarizer_config")? {
+        if let Ok(cfg) = serde_json::from_str::<SummarizerConfig>(&raw) {
+            return Ok(cfg);
+        }
+    }
+    Ok(default_summarizer_config())
+}
+
+pub fn set_summarizer_config(app: &AppHandle, cfg: SummarizerConfig) -> Result<(), String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+    let raw = serde_json::to_string(&cfg).map_err(|e| format!("Serialize config failed: {}", e))?;
+    set_setting(&conn, "summarizer_config", &raw)?;
     Ok(())
 }
 
@@ -793,8 +940,13 @@ fn build_context_pack_text(
     let todo = extract_lines_by_keywords(&recent, &["todo", "待办", "next", "计划"], 5);
     let constraints = extract_lines_by_keywords(&recent, &["must", "禁止", "不要", "约束"], 5);
 
-    format!(
-        "【项目背景】\n{background}\n\n【关键结论】\n{key_facts}\n\n【最近进展】\n{progress}\n\n【最近对话摘录】\n{recent}\n\n【当前待办】\n{todo}\n\n【必须遵守的约束】\n{constraints}\n\n【请你基于以上上下文继续，不要重复询问已经确认的信息】"
+    build_context_pack_stronger(
+        &background,
+        &key_facts,
+        &progress,
+        &todo,
+        &constraints,
+        &recent,
     )
 }
 
@@ -819,9 +971,69 @@ fn build_context_pack_from_struct(
     let todo = join(&summary.todo);
     let constraints = join(&summary.constraints);
 
-    format!(
-        "【项目背景】\n{background}\n\n【关键结论】\n{key_facts}\n\n【最近进展】\n{progress}\n\n【最近对话摘录】\n{recent}\n\n【当前待办】\n{todo}\n\n【必须遵守的约束】\n{constraints}\n\n【请你基于以上上下文继续，不要重复询问已经确认的信息】"
+    build_context_pack_stronger(
+        &background,
+        &key_facts,
+        &progress,
+        &todo,
+        &constraints,
+        &recent,
     )
+}
+
+fn build_context_pack_stronger(
+    background: &str,
+    key_facts: &str,
+    progress: &str,
+    todo: &str,
+    constraints: &str,
+    recent: &str,
+) -> String {
+    format!(
+        "【项目背景】\n{background}\n\n【已确认结论】\n{key_facts}\n\n【当前目标/待办】\n{todo}\n\n【最近进展】\n{progress}\n\n【近期对话要点】\n{recent}\n\n【必须遵守的约束】\n{constraints}\n\n【继续要求】\n1. 请直接基于以上上下文继续，不要重复询问已确认信息。\n2. 如果存在冲突，请优先遵守“必须遵守的约束”。\n3. 输出时给出清晰步骤或可执行建议。"
+    )
+}
+
+fn build_remote_prompt(kind: &str, prompt: &str, body: &str, existing: Option<&str>) -> String {
+    let existing_text = existing.unwrap_or("暂无");
+    format!(
+        "{prompt}\n\n[Summary Type]\n{kind}\n\n[Existing Summary]\n{existing_text}\n\n[Conversation]\n{body}\n\n[Output]\n- Use concise bullet points.\n- Keep factual and avoid speculation.\n- Include decisions, progress, TODOs, constraints."
+    )
+}
+
+fn extract_summary_from_response(text: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+        if let Some(s) = value.get("summary").and_then(|v| v.as_str()) {
+            return s.to_string();
+        }
+        if let Some(s) = value.get("output").and_then(|v| v.as_str()) {
+            return s.to_string();
+        }
+        if let Some(s) = value.get("text").and_then(|v| v.as_str()) {
+            return s.to_string();
+        }
+        if let Some(s) = value.get("result").and_then(|v| v.as_str()) {
+            return s.to_string();
+        }
+        if let Some(s) = value
+            .get("choices")
+            .and_then(|v| v.get(0))
+            .and_then(|v| v.get("message"))
+            .and_then(|v| v.get("content"))
+            .and_then(|v| v.as_str())
+        {
+            return s.to_string();
+        }
+        if let Some(s) = value
+            .get("choices")
+            .and_then(|v| v.get(0))
+            .and_then(|v| v.get("text"))
+            .and_then(|v| v.as_str())
+        {
+            return s.to_string();
+        }
+    }
+    text.to_string()
 }
 
 pub fn get_context_pack(
@@ -1147,4 +1359,113 @@ pub fn list_messages(
     }
     out.reverse();
     Ok(out)
+}
+
+async fn call_remote_summarizer(
+    cfg: &SummarizerConfig,
+    prompt_text: String,
+) -> Result<String, String> {
+    let endpoint = cfg
+        .endpoint
+        .clone()
+        .ok_or_else(|| "Summarizer endpoint not set".to_string())?;
+
+    let mut builder = ClientBuilder::new();
+    if let Some(timeout) = cfg.timeout_ms {
+        builder = builder.timeout(std::time::Duration::from_millis(timeout));
+    }
+    let client = builder
+        .build()
+        .map_err(|e| format!("Summarizer client failed: {}", e))?;
+
+    let mut request = client.post(endpoint).json(&serde_json::json!({
+        "model": cfg.model,
+        "prompt": cfg.prompt,
+        "input": prompt_text
+    }));
+
+    if let Some(api_key) = cfg.api_key.as_ref() {
+        request = request.bearer_auth(api_key);
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("Summarizer request failed: {}", e))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Summarizer read failed: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!("Summarizer error {}: {}", status, body));
+    }
+
+    Ok(extract_summary_from_response(&body))
+}
+
+pub async fn refresh_summaries(
+    app: &AppHandle,
+    params: MemoryRefreshSummariesParams,
+) -> Result<(), String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let project_id = params.project_id.unwrap_or_else(|| "default".to_string());
+    let session_id = if let Some(id) = params.session_id {
+        id
+    } else {
+        get_latest_session_id(&conn, &project_id)?
+            .ok_or_else(|| "No session found for project".to_string())?
+    };
+
+    let cfg = get_summarizer_config(app)?;
+    if cfg.mode.to_lowercase() != "remote" {
+        return refresh_rule_summaries(&conn, &project_id, &session_id);
+    }
+
+    let recent_messages = fetch_recent_messages(&conn, &session_id, 20)?
+        .into_iter()
+        .map(|(role, content, _)| format!("{}: {}", role, content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let existing_session = get_latest_summary(&conn, &project_id, Some(&session_id), "session")?;
+    let prompt = cfg
+        .prompt
+        .clone()
+        .unwrap_or_else(|| "Summarize the conversation into concise bullets.".to_string());
+    let session_prompt = build_remote_prompt("session", &prompt, &recent_messages, existing_session.as_deref());
+    let session_summary = call_remote_summarizer(&cfg, session_prompt).await?;
+    upsert_summary(
+        &conn,
+        &project_id,
+        Some(&session_id),
+        "session",
+        &session_summary,
+        None,
+        None,
+    )?;
+
+    let project_messages = fetch_recent_project_messages(&conn, &project_id, 40)?
+        .into_iter()
+        .map(|(role, content)| format!("{}: {}", role, content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let existing_project = get_latest_summary(&conn, &project_id, None, "project")?;
+    let project_prompt =
+        build_remote_prompt("project", &prompt, &project_messages, existing_project.as_deref());
+    let project_summary = call_remote_summarizer(&cfg, project_prompt).await?;
+
+    if let Some(struct_summary) = parse_struct_summary(&project_summary) {
+        if let Ok(json) = serde_json::to_string(&struct_summary) {
+            let _ = upsert_summary(&conn, &project_id, None, "project_struct", &json, None, None);
+        }
+        let text = project_struct_to_text(&struct_summary);
+        upsert_summary(&conn, &project_id, None, "project", &text, None, None)?;
+    } else {
+        upsert_summary(&conn, &project_id, None, "project", &project_summary, None, None)?;
+    }
+
+    Ok(())
 }
