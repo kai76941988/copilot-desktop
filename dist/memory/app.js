@@ -122,6 +122,36 @@ function renderMessages(items, append) {
   });
 }
 
+function renderProjectSummary(content) {
+  if (!content) {
+    elProjectSummary.textContent = "No summary yet.";
+    return;
+  }
+  try {
+    const data = JSON.parse(content);
+    const join = (arr) => (Array.isArray(arr) && arr.length ? arr.join("\n") : "暂无");
+    const text = [
+      "【项目背景】",
+      join(data.background),
+      "",
+      "【关键结论】",
+      join(data.key_facts),
+      "",
+      "【最近进展】",
+      join(data.progress),
+      "",
+      "【当前待办】",
+      join(data.todo),
+      "",
+      "【必须遵守的约束】",
+      join(data.constraints),
+    ].join("\n");
+    elProjectSummary.textContent = text;
+  } catch (e) {
+    elProjectSummary.textContent = content;
+  }
+}
+
 async function loadProjects() {
   if (!invoke) return;
   setStatus("Loading projects...");
@@ -152,10 +182,17 @@ async function loadSummaries() {
     summary_type: "project",
     limit: 1,
   });
-  if (projectSummary && projectSummary.length) {
-    elProjectSummary.textContent = projectSummary[0].content;
+  const structSummary = await invoke("memory_list_summaries", {
+    project_id: state.selectedProjectId,
+    summary_type: "project_struct",
+    limit: 1,
+  });
+  if (structSummary && structSummary.length) {
+    renderProjectSummary(structSummary[0].content);
+  } else if (projectSummary && projectSummary.length) {
+    renderProjectSummary(projectSummary[0].content);
   } else {
-    elProjectSummary.textContent = "No summary yet.";
+    renderProjectSummary("");
   }
 
   const summaries = await invoke("memory_list_summaries", {

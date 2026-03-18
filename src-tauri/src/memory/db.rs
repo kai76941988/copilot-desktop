@@ -5,6 +5,7 @@ use crate::memory::{
     MemorySessionInfo, MemorySummaryInfo,
 };
 use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
@@ -21,6 +22,43 @@ const CHUNK_SIZE: i64 = 12;
 const SESSION_SUMMARY_CHUNKS: i64 = 3;
 const PROJECT_SUMMARY_SESSIONS: i64 = 3;
 const SUMMARY_MAX_CHARS: usize = 800;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct ProjectStructSummary {
+    background: Vec<String>,
+    key_facts: Vec<String>,
+    progress: Vec<String>,
+    todo: Vec<String>,
+    constraints: Vec<String>,
+    updated_at: i64,
+}
+
+fn merge_unique(mut base: Vec<String>, adds: Vec<String>, max_lines: usize) -> Vec<String> {
+    for line in adds {
+        if !base.iter().any(|x| x == &line) && !line.trim().is_empty() {
+            base.push(line);
+        }
+        if base.len() >= max_lines {
+            break;
+        }
+    }
+    if base.len() > max_lines {
+        base.truncate(max_lines);
+    }
+    base
+}
+
+fn project_struct_to_text(s: &ProjectStructSummary) -> String {
+    let join = |v: &Vec<String>| if v.is_empty() { "暂无".to_string() } else { v.join("\n") };
+    format!(
+        "【项目背景】\n{}\n\n【关键结论】\n{}\n\n【最近进展】\n{}\n\n【当前待办】\n{}\n\n【必须遵守的约束】\n{}",
+        join(&s.background),
+        join(&s.key_facts),
+        join(&s.progress),
+        join(&s.todo),
+        join(&s.constraints)
+    )
+}
 
 fn collapse_whitespace(input: &str) -> String {
     input
@@ -57,6 +95,41 @@ fn extract_lines_by_keywords(input: &str, keywords: &[&str], max_lines: usize) -
     } else {
         result.join("\n")
     }
+}
+
+fn parse_struct_summary(content: &str) -> Option<ProjectStructSummary> {
+    serde_json::from_str::<ProjectStructSummary>(content).ok()
+}
+
+fn normalize_lines_from_messages(messages: &[(String, String)]) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for (role, content) in messages {
+        let trimmed = collapse_whitespace(content);
+        if trimmed.is_empty() {
+            continue;
+        }
+        let line = if trimmed.len() > 240 {
+            format!("{}: {}...", role, &trimmed[..220])
+        } else {
+            format!("{}: {}", role, trimmed)
+        };
+        lines.push(line);
+    }
+    lines
+}
+
+fn pick_lines_with_keywords(lines: &[String], keywords: &[&str], max_lines: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in lines {
+        let lower = line.to_lowercase();
+        if keywords.iter().any(|k| lower.contains(k)) {
+            out.push(line.clone());
+            if out.len() >= max_lines {
+                break;
+            }
+        }
+    }
+    out
 }
 
 fn get_memory_db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -394,6 +467,69 @@ fn build_project_summary(conn: &Connection, project_id: &str) -> Result<String, 
     Ok(summarize_text(&joined, SUMMARY_MAX_CHARS))
 }
 
+fn build_project_struct_summary(
+    conn: &Connection,
+    project_id: &str,
+    session_id: &str,
+) -> Result<ProjectStructSummary, String> {
+    let existing = get_latest_summary(conn, project_id, None, "project_struct")?;
+    let mut summary = existing
+        .as_deref()
+        .and_then(parse_struct_summary)
+        .unwrap_or_default();
+
+    let recent = fetch_recent_messages(conn, session_id, 20)?
+        .into_iter()
+        .map(|(role, content, _)| (role, content))
+        .collect::<Vec<_>>();
+
+    if summary.background.is_empty() {
+        if let Some(first_user) = recent.iter().find(|(r, _)| r == "user") {
+            summary
+                .background
+                .push(summarize_text(&first_user.1, 200));
+        }
+    }
+
+    let lines = normalize_lines_from_messages(&recent);
+    let todo_lines = pick_lines_with_keywords(
+        &lines,
+        &[
+            "todo",
+            "待办",
+            "下一步",
+            "next",
+            "计划",
+            "需要",
+            "to do",
+        ],
+        6,
+    );
+    let constraint_lines = pick_lines_with_keywords(
+        &lines,
+        &["必须", "不要", "禁止", "only", "must", "constraint", "限制"],
+        6,
+    );
+    let fact_lines = pick_lines_with_keywords(
+        &lines,
+        &["结论", "决定", "确认", "confirmed", "final", "关键", "事实", "因此"],
+        6,
+    );
+    let progress_lines = pick_lines_with_keywords(
+        &lines,
+        &["完成", "done", "进展", "progress", "已完成", "当前", "working"],
+        6,
+    );
+
+    summary.todo = merge_unique(summary.todo, todo_lines, 8);
+    summary.constraints = merge_unique(summary.constraints, constraint_lines, 8);
+    summary.key_facts = merge_unique(summary.key_facts, fact_lines, 8);
+    summary.progress = merge_unique(summary.progress, progress_lines, 8);
+    summary.updated_at = now_ms();
+
+    Ok(summary)
+}
+
 fn maybe_update_summaries(
     conn: &Connection,
     project_id: &str,
@@ -433,17 +569,40 @@ fn maybe_update_summaries(
             None,
             None,
         )?;
-
-        let project_summary = build_project_summary(conn, project_id)?;
-        upsert_summary(
-            conn,
-            project_id,
-            None,
-            "project",
-            &project_summary,
-            None,
-            None,
-        )?;
+        if let Ok(struct_summary) = build_project_struct_summary(conn, project_id, session_id) {
+            if let Ok(json) = serde_json::to_string(&struct_summary) {
+                let _ = upsert_summary(
+                    conn,
+                    project_id,
+                    None,
+                    "project_struct",
+                    &json,
+                    None,
+                    None,
+                );
+            }
+            let project_text = project_struct_to_text(&struct_summary);
+            upsert_summary(
+                conn,
+                project_id,
+                None,
+                "project",
+                &project_text,
+                None,
+                None,
+            )?;
+        } else {
+            let project_summary = build_project_summary(conn, project_id)?;
+            upsert_summary(
+                conn,
+                project_id,
+                None,
+                "project",
+                &project_summary,
+                None,
+                None,
+            )?;
+        }
     }
 
     Ok(())
@@ -639,6 +798,32 @@ fn build_context_pack_text(
     )
 }
 
+fn build_context_pack_from_struct(
+    summary: &ProjectStructSummary,
+    session_summary: Option<String>,
+    recent_messages: Vec<String>,
+) -> String {
+    let join = |v: &Vec<String>| if v.is_empty() { "暂无".to_string() } else { v.join("\n") };
+    let background = join(&summary.background);
+    let key_facts = join(&summary.key_facts);
+    let progress = if let Some(s) = session_summary {
+        if s.trim().is_empty() { join(&summary.progress) } else { s }
+    } else {
+        join(&summary.progress)
+    };
+    let recent = if recent_messages.is_empty() {
+        "暂无".to_string()
+    } else {
+        recent_messages.join("\n")
+    };
+    let todo = join(&summary.todo);
+    let constraints = join(&summary.constraints);
+
+    format!(
+        "【项目背景】\n{background}\n\n【关键结论】\n{key_facts}\n\n【最近进展】\n{progress}\n\n【最近对话摘录】\n{recent}\n\n【当前待办】\n{todo}\n\n【必须遵守的约束】\n{constraints}\n\n【请你基于以上上下文继续，不要重复询问已经确认的信息】"
+    )
+}
+
 pub fn get_context_pack(
     app: &AppHandle,
     params: MemoryGetContextPackParams,
@@ -650,6 +835,7 @@ pub fn get_context_pack(
     let session_id = params.session_id;
 
     let project_summary = get_latest_summary(&conn, &project_id, None, "project")?;
+    let project_struct = get_latest_summary(&conn, &project_id, None, "project_struct")?;
     let session_summary = if let Some(ref sid) = session_id {
         get_latest_summary(&conn, &project_id, Some(sid), "session")?
     } else {
@@ -683,6 +869,16 @@ pub fn get_context_pack(
         for r in rows {
             let (role, content) = r.map_err(|e| format!("Row parse failed: {}", e))?;
             recent_messages.push(format!("{}: {}", role, content));
+        }
+    }
+
+    if let Some(struct_json) = project_struct {
+        if let Some(struct_summary) = parse_struct_summary(&struct_json) {
+            return Ok(build_context_pack_from_struct(
+                &struct_summary,
+                session_summary,
+                recent_messages,
+            ));
         }
     }
 

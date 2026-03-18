@@ -181,27 +181,60 @@
       return false;
     }
 
+    const PENDING_PACK_KEY = "pake_memory_pending_pack";
+
+    function storePendingPack(payload) {
+      try {
+        localStorage.setItem(PENDING_PACK_KEY, JSON.stringify(payload));
+      } catch (e) {}
+    }
+
+    function loadPendingPack() {
+      try {
+        const raw = localStorage.getItem(PENDING_PACK_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function clearPendingPack() {
+      try {
+        localStorage.removeItem(PENDING_PACK_KEY);
+      } catch (e) {}
+    }
+
+    function attemptInject(text) {
+      const input = findInputBox();
+      if (input) {
+        if (setInputText(input, text)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     function handleContextPack(payload) {
       const text = (payload && payload.text) || payload || "";
       if (!text) return;
       const forceNewChat = !!(payload && payload.forceNewChat);
+      storePendingPack(payload);
+
       if (forceNewChat) {
         const btn = findNewChatButton();
         if (btn) {
           btn.click();
         }
         setTimeout(() => {
-          const input = findInputBox();
-          if (input) {
-            setInputText(input, text);
+          if (attemptInject(text)) {
+            clearPendingPack();
           }
         }, 800);
-        return;
-      }
-
-      const input = findInputBox();
-      if (input) {
-        setInputText(input, text);
+      } else {
+        if (attemptInject(text)) {
+          clearPendingPack();
+        }
       }
     }
 
@@ -223,6 +256,26 @@
         handleContextPack(event?.payload);
       });
     }
+
+    function retryPendingPack() {
+      const pending = loadPendingPack();
+      if (!pending) return;
+      const text = pending.text || pending;
+      if (!text) return;
+      if (attemptInject(text)) {
+        clearPendingPack();
+      }
+    }
+
+    const retryObserver = new MutationObserver(() => retryPendingPack());
+    retryObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+
+    setTimeout(() => retryPendingPack(), 1200);
+    setTimeout(() => retryPendingPack(), 2500);
+    setTimeout(() => retryPendingPack(), 4500);
 
     function isVisible(el) {
       if (!el || !(el instanceof Element)) return false;
