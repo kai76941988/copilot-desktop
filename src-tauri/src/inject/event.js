@@ -14,6 +14,9 @@ function shouldUseHtmlZoom() {
   try {
     const hostname = window.location.hostname.toLowerCase();
     const pathname = window.location.pathname.toLowerCase();
+    if (hostname === "copilot.microsoft.com") {
+      return true;
+    }
     const hasLoginUi = () => {
       try {
         return !!document.querySelector(

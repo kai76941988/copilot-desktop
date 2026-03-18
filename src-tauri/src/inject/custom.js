@@ -62,6 +62,24 @@
       '[data-testid*="login"]',
     ];
 
+    const AUTH_UI_CANDIDATE_SELECTORS = [
+      ...AUTH_FORM_SELECTORS,
+      '[role="dialog"]',
+      '[role="menu"]',
+      '[aria-modal="true"]',
+      '[class*="flyout"]',
+      '[class*="popover"]',
+      '[class*="menu"]',
+      '[class*="account"]',
+      '[class*="profile"]',
+      '[class*="signin"]',
+      '[class*="login"]',
+      '[data-testid*="account"]',
+      '[data-testid*="profile"]',
+      '[data-testid*="signin"]',
+      '[data-testid*="login"]',
+    ];
+
     const LOGGED_IN_TEXT_PATTERNS = [
       /new chat/i,
       /new conversation/i,
@@ -91,6 +109,27 @@
       /use copilot/i,
       /登录/i,
       /注册/i,
+    ];
+
+    const AUTH_PRESERVE_TEXT_PATTERNS = [
+      ...LOGGED_IN_TEXT_PATTERNS,
+      ...LOGGED_OUT_TEXT_PATTERNS,
+      /use another account/i,
+      /add account/i,
+      /switch account/i,
+      /account/i,
+      /profile/i,
+      /settings/i,
+      /sign out/i,
+      /log out/i,
+      /logout/i,
+      /microsoft/i,
+      /账户/i,
+      /账号/i,
+      /切换/i,
+      /添加/i,
+      /个人/i,
+      /退出/i,
     ];
 
     const DIRECT_OVERLAY_SELECTORS = [
@@ -147,6 +186,168 @@
         if (patterns.some((p) => p.test(text))) return el;
       }
       return null;
+    }
+
+    function elementMatchesSelectors(el, selectors) {
+      if (!el || !(el instanceof Element)) return false;
+      return selectors.some((sel) => {
+        try {
+          return el.matches(sel);
+        } catch (_) {
+          return false;
+        }
+      });
+    }
+
+    function elementContainsSelector(el, selectors) {
+      if (!el || !(el instanceof Element)) return false;
+      for (const sel of selectors) {
+        try {
+          if (el.querySelector(sel)) return true;
+        } catch (_) {}
+      }
+      return false;
+    }
+
+    function hasInteractiveChildren(el) {
+      if (!el || !(el instanceof Element)) return false;
+      const interactive = el.querySelectorAll(
+        "input, textarea, select, button, a, [role='button'], [tabindex]",
+      );
+      for (const child of interactive) {
+        if (isVisible(child)) return true;
+      }
+      return false;
+    }
+
+    function isAuthUiElement(el) {
+      if (!el || !(el instanceof Element)) return false;
+      if (!isVisible(el)) return false;
+
+      if (elementMatchesSelectors(el, AUTH_FORM_SELECTORS)) return true;
+      if (elementContainsSelector(el, AUTH_FORM_SELECTORS)) return true;
+
+      const label = (el.getAttribute("aria-label") || "").toLowerCase();
+      const idClass = `${el.id || ""} ${el.className || ""}`.toLowerCase();
+      if (
+        /(account|profile|signin|sign-in|login|auth|msal|microsoft|user)/.test(
+          `${label} ${idClass}`,
+        )
+      ) {
+        return true;
+      }
+
+      const text = (el.innerText || "").trim();
+      if (text && AUTH_PRESERVE_TEXT_PATTERNS.some((p) => p.test(text))) {
+        return true;
+      }
+
+      if (
+        elementMatchesSelectors(el, [
+          "[role='dialog']",
+          "[role='menu']",
+          "[aria-modal='true']",
+        ]) &&
+        hasInteractiveChildren(el)
+      ) {
+        return true;
+      }
+
+      return false;
+    }
+
+    function isLoginAccountFlyout(el) {
+      if (!el || !(el instanceof Element)) return false;
+      if (!isVisible(el)) return false;
+      const rect = el.getBoundingClientRect();
+      const nearLeft = rect.left < window.innerWidth * 0.35;
+      const nearBottom = rect.bottom > window.innerHeight * 0.5;
+      const smallPanel =
+        rect.width < window.innerWidth * 0.6 &&
+        rect.height < window.innerHeight * 0.8;
+      return nearLeft && nearBottom && smallPanel && isAuthUiElement(el);
+    }
+
+    function shouldPreserveElement(el) {
+      if (!el || !(el instanceof Element)) return false;
+      if (!isVisible(el)) return false;
+      if (isAuthUiElement(el)) return true;
+      if (isLoginAccountFlyout(el)) return true;
+      return false;
+    }
+
+    function getAuthUiElement() {
+      for (const sel of AUTH_UI_CANDIDATE_SELECTORS) {
+        const list = Array.from(document.querySelectorAll(sel));
+        for (const el of list) {
+          if (isAuthUiElement(el)) return el;
+        }
+      }
+      return null;
+    }
+
+    function ensureAuthFlyoutVisible(reason) {
+      const authEl = getAuthUiElement();
+      if (!authEl) return 0;
+
+      let fixed = 0;
+      try {
+        authEl.style.setProperty("z-index", "999999", "important");
+        authEl.style.setProperty("pointer-events", "auto", "important");
+      } catch (_) {}
+
+      let node = authEl.parentElement;
+      while (node && node !== document.documentElement) {
+        const style = window.getComputedStyle(node);
+        if (style.overflow !== "visible") {
+          node.style.setProperty("overflow", "visible", "important");
+          fixed++;
+        }
+        if (style.overflowX !== "visible") {
+          node.style.setProperty("overflow-x", "visible", "important");
+          fixed++;
+        }
+        if (style.overflowY !== "visible") {
+          node.style.setProperty("overflow-y", "visible", "important");
+          fixed++;
+        }
+        if (style.clipPath && style.clipPath !== "none") {
+          node.style.setProperty("clip-path", "none", "important");
+          fixed++;
+        }
+        if (style.contain && style.contain !== "none") {
+          node.style.setProperty("contain", "none", "important");
+          fixed++;
+        }
+        if (style.transform && style.transform !== "none") {
+          node.style.setProperty("transform", "none", "important");
+          fixed++;
+        }
+        node = node.parentElement;
+      }
+
+      try {
+        const bodyStyle = window.getComputedStyle(document.body);
+        if (bodyStyle.transform && bodyStyle.transform !== "none") {
+          document.body.style.setProperty("transform", "none", "important");
+          document.body.style.setProperty("transform-origin", "top left", "important");
+          document.body.style.setProperty("width", "auto", "important");
+          document.body.style.setProperty("height", "auto", "important");
+          fixed++;
+        }
+      } catch (_) {}
+
+      try {
+        const htmlZoom = window.localStorage.getItem("htmlZoom");
+        if (htmlZoom) {
+          document.documentElement.style.setProperty("zoom", htmlZoom, "important");
+        }
+      } catch (_) {}
+
+      if (fixed > 0) {
+        log("auth flyout fix applied", { reason, fixed });
+      }
+      return fixed;
     }
 
     function getMainReadyElement() {
@@ -291,6 +492,7 @@
 
     function isLikelyCenterSpinner(el) {
       if (!isVisible(el)) return false;
+      if (shouldPreserveElement(el)) return false;
       const rect = el.getBoundingClientRect();
       if (rect.width > 120 || rect.height > 120) return false;
       if (!rectNearCenter(rect)) return false;
@@ -315,6 +517,7 @@
     function isLikelyBlockingOverlay(el, mainEl) {
       if (!el || !(el instanceof Element)) return false;
       if (!isVisible(el)) return false;
+      if (shouldPreserveElement(el)) return false;
       if (el === mainEl) return false;
       if (mainEl && (el === mainEl || el.contains(mainEl))) return false;
 
@@ -360,6 +563,7 @@
         const nodes = Array.from(document.querySelectorAll(sel));
         for (const el of nodes) {
           if (!isVisible(el)) continue;
+          if (shouldPreserveElement(el)) continue;
           if (mainEl && (el === mainEl || el.contains(mainEl))) continue;
           if (hideElement(el, `direct-selector:${sel}`)) changed++;
         }
@@ -371,6 +575,9 @@
       let changed = 0;
       const all = Array.from(document.body.querySelectorAll("*"));
       for (const el of all) {
+        if (shouldPreserveElement(el)) {
+          continue;
+        }
         if (isLikelyBlockingOverlay(el, mainEl)) {
           if (hideElement(el, "blocking-overlay")) changed++;
         } else if (isLikelyCenterSpinner(el)) {
@@ -407,6 +614,7 @@
     }
 
     function cleanupOnce(reason) {
+      ensureAuthFlyoutVisible(reason);
       const mainReady = isMainUiVisible();
       const loggedInReady = isLoggedInUiReady();
       const allowCleanup = shouldCleanupOverlay();
