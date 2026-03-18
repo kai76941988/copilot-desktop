@@ -493,7 +493,7 @@ fn upsert_summary(
 
 fn build_session_summary(
     conn: &Connection,
-    project_id: &str,
+    _project_id: &str,
     session_id: &str,
 ) -> Result<String, String> {
     let mut stmt = conn
@@ -1540,11 +1540,17 @@ async fn call_remote_summarizer(
         .build()
         .map_err(|e| format!("Summarizer client failed: {}", e))?;
 
-    let mut request = client.post(endpoint).json(&serde_json::json!({
+    let body = serde_json::json!({
         "model": cfg.model,
         "prompt": cfg.prompt,
         "input": prompt_text
-    }));
+    })
+    .to_string();
+
+    let mut request = client
+        .post(endpoint)
+        .header("Content-Type", "application/json")
+        .body(body);
 
     if let Some(api_key) = cfg.api_key.as_ref() {
         request = request.bearer_auth(api_key);

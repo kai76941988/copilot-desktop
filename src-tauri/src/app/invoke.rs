@@ -13,7 +13,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::str::FromStr;
 use tauri::http::Method;
-use tauri::{command, AppHandle, Manager, Url, WebviewWindow};
+use tauri::{command, AppHandle, Manager, Url, WebviewWindow, Emitter};
 use tauri_plugin_http::reqwest::{ClientBuilder, Request};
 
 #[cfg(target_os = "macos")]
