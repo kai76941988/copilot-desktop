@@ -388,6 +388,21 @@
       }
     }
 
+    function logAuthState(reason) {
+      try {
+        const lsKeys = Object.keys(window.localStorage || {});
+        const ssKeys = Object.keys(window.sessionStorage || {});
+        log("auth-state", {
+          reason,
+          url: window.location.href,
+          cookieLen: (document.cookie || "").length,
+          localStorageKeys: lsKeys.slice(0, 20),
+          sessionStorageKeys: ssKeys.slice(0, 20),
+          authCacheReady: hasAuthCache(),
+        });
+      } catch (_) {}
+    }
+
     function isLoggedInUiReady() {
       const mainEl = getMainReadyElement();
       if (!mainEl) {
@@ -412,24 +427,13 @@
       const loggedInEl =
         findVisibleBySelectors(LOGGED_IN_SELECTORS) ||
         findVisibleTextMatch(LOGGED_IN_TEXT_PATTERNS);
-      if (loggedInEl) return true;
-
-      // Fallback: main UI + enabled input for a short period
-      const inputEl = getInputElement();
-      const inputEnabled =
-        inputEl &&
-        !inputEl.disabled &&
-        inputEl.getAttribute("aria-disabled") !== "true" &&
-        !inputEl.readOnly;
-
       const authCacheReady = hasAuthCache();
-      if (inputEnabled && authCacheReady) {
-        if (!mainReadySince) mainReadySince = Date.now();
-        if (Date.now() - mainReadySince > 10000) return true;
-      } else {
+      if (!authCacheReady) {
         mainReadySince = 0;
+        return false;
       }
-
+      if (loggedInEl) return true;
+      mainReadySince = 0;
       return false;
     }
 
@@ -749,6 +753,7 @@
 
     function init() {
       log("init");
+      logAuthState("init");
       hookHistory();
       startObserver();
       guardedCleanup("init");
@@ -756,16 +761,19 @@
       startLowFreqRetry();
 
       window.addEventListener("load", () => {
+        logAuthState("load");
         guardedCleanup("load");
         startHighFreqRetry("load");
       });
 
       window.addEventListener("pageshow", () => {
+        logAuthState("pageshow");
         guardedCleanup("pageshow");
         startHighFreqRetry("pageshow");
       });
 
       window.addEventListener("focus", () => {
+        logAuthState("focus");
         guardedCleanup("focus");
         startHighFreqRetry("focus");
       });
@@ -782,6 +790,7 @@
 
       document.addEventListener("visibilitychange", () => {
         if (!document.hidden) {
+          logAuthState("visibilitychange");
           guardedCleanup("visibilitychange");
           startHighFreqRetry("visibilitychange");
         }

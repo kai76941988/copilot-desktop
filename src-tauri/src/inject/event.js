@@ -356,15 +356,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (DEBUG_AUTH) console.log("[PakeAuthNav]", ...args);
   };
 
-  const redirectAuthSameWindow = (url, reason) => {
-    const current = window.location.href;
-    authLog("auth -> same window redirect", { url, reason });
-    setTimeout(() => {
-      if (window.location.href === current) {
-        window.location.href = url;
-      }
-    }, 120);
-  };
 
   // 全屏状态变化监听器 - 修复全屏时缩放问题
   document.addEventListener("fullscreenchange", () => {
@@ -626,15 +617,12 @@ document.addEventListener("DOMContentLoaded", () => {
         isInternal: internalCheck,
       });
 
-      // Auth links: force same-window redirect to keep session consistent
+      // Auth links: allow default behavior (handled by host-level new window policy)
       if (isAuthUrl) {
-        authLog("anchor auth -> same window", {
+        authLog("anchor auth -> allow", {
           url: absoluteUrl,
           target: anchorElement.target || "_self",
         });
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        redirectAuthSameWindow(absoluteUrl, "anchor");
         return;
       }
 
@@ -739,8 +727,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const urlString = (url || "").toString();
     if (!urlString || urlString.startsWith("about:")) {
       if (auth.isAuthPopupName && auth.isAuthPopupName(name)) {
-        authLog("window.open blank auth -> blocked", { name });
-        return null;
+        authLog("window.open blank auth -> allow", { name });
+        return originalWindowOpen.call(window, url, name, specs);
       }
       return originalWindowOpen.call(window, url, name, specs);
     }
@@ -756,9 +744,8 @@ document.addEventListener("DOMContentLoaded", () => {
         (window.isAuthLink && window.isAuthLink(absoluteUrl));
 
       if (isAuthUrl) {
-        authLog("window.open auth -> same window", { url: absoluteUrl, name });
-        redirectAuthSameWindow(absoluteUrl, "window.open");
-        return null;
+        authLog("window.open auth -> allow", { url: absoluteUrl, name });
+        return originalWindowOpen.call(window, absoluteUrl, name, specs);
       }
 
       // Allow non-Microsoft auth popups to open normally

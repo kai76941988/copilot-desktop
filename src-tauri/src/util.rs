@@ -3,6 +3,13 @@ use std::env;
 use std::path::PathBuf;
 use tauri::{AppHandle, Config, Manager, WebviewWindow};
 
+#[derive(Clone, Debug)]
+pub struct WebviewDataDir {
+    pub udf_root: PathBuf,
+    pub profile_dir: PathBuf,
+    pub profile_name: String,
+}
+
 pub fn get_pake_config() -> (PakeConfig, Config) {
     #[cfg(feature = "cli-build")]
     let pake_config: PakeConfig = serde_json::from_str(include_str!("../.pake/pake.json"))
@@ -23,19 +30,30 @@ pub fn get_pake_config() -> (PakeConfig, Config) {
     (pake_config, tauri_config)
 }
 
-pub fn get_data_dir(app: &AppHandle, package_name: String) -> PathBuf {
-    {
-        let data_dir = app
-            .path()
-            .config_dir()
-            .expect("Failed to get data dirname")
-            .join(package_name);
+pub fn get_webview_data_dir(app: &AppHandle, package_name: &str) -> WebviewDataDir {
+    let base_dir = app
+        .path()
+        .data_dir()
+        .or_else(|_| app.path().config_dir())
+        .expect("Failed to get app data dir");
 
-        if !data_dir.exists() {
-            std::fs::create_dir(&data_dir)
-                .unwrap_or_else(|_| panic!("Can't create dir {}", data_dir.display()));
-        }
-        data_dir
+    let udf_root = base_dir.join(package_name).join("webview2_udf");
+    if !udf_root.exists() {
+        std::fs::create_dir_all(&udf_root)
+            .unwrap_or_else(|_| panic!("Can't create dir {}", udf_root.display()));
+    }
+
+    let profile_name = "Default".to_string();
+    let profile_dir = udf_root.join(&profile_name);
+    if !profile_dir.exists() {
+        std::fs::create_dir_all(&profile_dir)
+            .unwrap_or_else(|_| panic!("Can't create dir {}", profile_dir.display()));
+    }
+
+    WebviewDataDir {
+        udf_root,
+        profile_dir,
+        profile_name,
     }
 }
 

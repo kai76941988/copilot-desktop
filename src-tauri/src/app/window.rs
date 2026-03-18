@@ -1,5 +1,5 @@
 use crate::app::config::PakeConfig;
-use crate::util::get_data_dir;
+use crate::util::{get_webview_data_dir, WebviewDataDir};
 use std::{path::PathBuf, str::FromStr, sync::Mutex};
 use tauri::{AppHandle, Config, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
@@ -20,6 +20,43 @@ fn build_proxy_browser_arg(url: &Url) -> Option<String> {
         "http" | "socks5" => Some(format!("--proxy-server={scheme}://{host}:{port}")),
         _ => None,
     }
+}
+
+fn is_auth_url_str(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    let host_hits = [
+        "copilot.microsoft.com",
+        "login.live.com",
+        "login.microsoftonline.com",
+        "login.microsoft.com",
+        "login.windows.net",
+        "account.microsoft.com",
+        "signup.live.com",
+        "live.com",
+        "microsoft.com",
+        "msauth.net",
+        "msftauth.net",
+    ]
+    .iter()
+    .any(|h| lower.contains(h));
+
+    let keyword_hits = [
+        "msauth",
+        "msftauth",
+        "oauth",
+        "authorize",
+        "token",
+        "callback",
+        "consent",
+        "kmsi",
+        "signin",
+        "login",
+        "sso",
+    ]
+    .iter()
+    .any(|k| lower.contains(k));
+
+    host_hits || keyword_hits
 }
 
 pub struct MultiWindowState {
@@ -45,13 +82,36 @@ impl MultiWindowState {
 }
 
 pub fn set_window(app: &AppHandle, config: &PakeConfig, tauri_config: &Config) -> WebviewWindow {
-    build_window_with_label(app, config, tauri_config, "pake").expect("Failed to build window")
+    build_window_with_label(app, config, tauri_config, "pake", None)
+        .expect("Failed to build window")
 }
 
 pub fn open_additional_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let state = app.state::<MultiWindowState>();
     let label = state.next_window_label();
-    build_window_with_label(app, &state.pake_config, &state.tauri_config, &label)
+    build_window_with_label(app, &state.pake_config, &state.tauri_config, &label, None)
+}
+
+pub fn open_auth_window_with_url(app: &AppHandle, url: Url) -> tauri::Result<WebviewWindow> {
+    if let Some(existing) = app.get_webview_window("pake-auth") {
+        let url_str = url.as_str().to_string();
+        let _ = existing.eval(&format!(
+            "window.location.href = {}",
+            serde_json::to_string(&url_str).unwrap()
+        ));
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(existing);
+    }
+
+    let state = app.state::<MultiWindowState>();
+    build_window_with_label(
+        app,
+        &state.pake_config,
+        &state.tauri_config,
+        "pake-auth",
+        Some(url),
+    )
 }
 
 pub fn open_additional_window_safe(app: &AppHandle) {
@@ -80,9 +140,23 @@ fn build_window_with_label(
     config: &PakeConfig,
     tauri_config: &Config,
     label: &str,
+    override_url: Option<Url>,
 ) -> tauri::Result<WebviewWindow> {
     let package_name = tauri_config.clone().product_name.unwrap();
-    let _data_dir = get_data_dir(app, package_name);
+    let udf_info: WebviewDataDir = get_webview_data_dir(app, &package_name);
+
+    println!(
+        "[PakeAuthHost] UDF_ROOT: {}",
+        udf_info.udf_root.display()
+    );
+    println!(
+        "[PakeAuthHost] PROFILE: {}",
+        udf_info.profile_name
+    );
+    println!(
+        "[PakeAuthHost] PROFILE_DIR: {}",
+        udf_info.profile_dir.display()
+    );
 
     let window_config = config
         .windows
@@ -91,10 +165,13 @@ fn build_window_with_label(
 
     let user_agent = config.user_agent.get();
 
-    let url = match window_config.url_type.as_str() {
-        "web" => WebviewUrl::App(window_config.url.parse().unwrap()),
-        "local" => WebviewUrl::App(PathBuf::from(&window_config.url)),
-        _ => panic!("url type can only be web or local"),
+    let url = match override_url {
+        Some(u) => WebviewUrl::App(u),
+        None => match window_config.url_type.as_str() {
+            "web" => WebviewUrl::App(window_config.url.parse().unwrap()),
+            "local" => WebviewUrl::App(PathBuf::from(&window_config.url)),
+            _ => panic!("url type can only be web or local"),
+        },
     };
 
     let config_script = format!(
@@ -164,8 +241,20 @@ fn build_window_with_label(
     }
 
     if window_config.new_window {
-        window_builder = window_builder
-            .on_new_window(move |_url, _features| tauri::webview::NewWindowResponse::Allow);
+        let app_handle = app.clone();
+        window_builder = window_builder.on_new_window(move |url, _features| {
+            let url_str = url.as_str().to_string();
+            println!("[PakeAuthHost] NewWindowRequested: {}", url_str);
+            if is_auth_url_str(&url_str) {
+                println!("[PakeAuthHost] Auth new window -> opening auth window");
+                if let Err(err) = open_auth_window_with_url(&app_handle, url.clone()) {
+                    println!("[PakeAuthHost] Failed to open auth window: {:?}", err);
+                }
+                return tauri::webview::NewWindowResponse::Deny;
+            }
+
+            tauri::webview::NewWindowResponse::Allow
+        });
     }
 
     // Add initialization scripts
@@ -246,7 +335,9 @@ fn build_window_with_label(
     // Windows and Linux: set data_directory before proxy_url
     #[cfg(not(target_os = "macos"))]
     {
-        window_builder = window_builder.data_directory(_data_dir).theme(None);
+        window_builder = window_builder
+            .data_directory(udf_info.profile_dir.clone())
+            .theme(None);
 
         if !config.proxy_url.is_empty() {
             if let Ok(proxy_url) = Url::from_str(&config.proxy_url) {
@@ -288,6 +379,13 @@ fn build_window_with_label(
     // Allow navigation to OAuth/authentication domains
     window_builder = window_builder.on_navigation(|url| {
         let url_str = url.as_str();
+
+        if is_auth_url_str(url_str) {
+            println!("[PakeAuthHost] AuthNav: {}", url_str);
+        }
+        if url_str.contains("copilot.microsoft.com") {
+            println!("[PakeAuthHost] CopilotNav: {}", url_str);
+        }
 
         // Always allow same-origin navigation
         if url_str.starts_with("http://localhost") || url_str.starts_with("http://127.0.0.1") {
