@@ -18,7 +18,6 @@ jobs:
             cmd: npm run buildWindows
             artifact: windows-package
             path: |
-              dist/app/*.zip
               dist/app/*.exe
           - os: macos-15
             env:

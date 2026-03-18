@@ -59,14 +59,6 @@ async function afterPackageBuilt (packagePath) {
     })
 }
 
-// creating multiple packages simultaneously causes errors in electron-rebuild, so do one arch at a time instead
+// build only x64 to keep Windows artifacts small
 createPackage('win32', { arch: Arch.x64 })
-  .then(afterPackageBuilt)
-  .then(function () {
-    return createPackage('win32', { arch: Arch.ia32 })
-  })
-  .then(afterPackageBuilt)
-  .then(function () {
-    return createPackage('win32', { arch: Arch.arm64 })
-  })
   .then(afterPackageBuilt)
