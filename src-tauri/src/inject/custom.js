@@ -370,6 +370,24 @@
       );
     }
 
+    function hasAuthCache() {
+      try {
+        const lsKeys = Object.keys(window.localStorage || {});
+        const ssKeys = Object.keys(window.sessionStorage || {});
+        const hasMsalKey = (k) =>
+          k.startsWith("msal.") ||
+          k.includes("login.microsoftonline") ||
+          k.includes("microsoft") ||
+          k.includes("aad");
+        return (
+          lsKeys.some(hasMsalKey) ||
+          ssKeys.some(hasMsalKey)
+        );
+      } catch (_) {
+        return false;
+      }
+    }
+
     function isLoggedInUiReady() {
       const mainEl = getMainReadyElement();
       if (!mainEl) {
@@ -404,9 +422,10 @@
         inputEl.getAttribute("aria-disabled") !== "true" &&
         !inputEl.readOnly;
 
-      if (inputEnabled) {
+      const authCacheReady = hasAuthCache();
+      if (inputEnabled && authCacheReady) {
         if (!mainReadySince) mainReadySince = Date.now();
-        if (Date.now() - mainReadySince > 8000) return true;
+        if (Date.now() - mainReadySince > 10000) return true;
       } else {
         mainReadySince = 0;
       }

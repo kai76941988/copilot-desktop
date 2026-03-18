@@ -81,6 +81,8 @@
   ];
 
   function isMicrosoftAuthUrl(url) {
+    const raw = (url || "").toString();
+    if (/^msauth/i.test(raw) || /^msftauth/i.test(raw)) return true;
     const u = toUrl(url);
     if (!u) return false;
     const host = u.hostname.toLowerCase();
@@ -106,6 +108,8 @@
   }
 
   function isInternalAllowedUrl(url) {
+    const raw = (url || "").toString();
+    if (/^msauth/i.test(raw) || /^msftauth/i.test(raw)) return true;
     const u = toUrl(url);
     if (!u) return false;
     const host = u.hostname.toLowerCase();

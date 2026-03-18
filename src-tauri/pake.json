@@ -21,7 +21,7 @@
       "maximize": false,
       "start_to_tray": false,
       "force_internal_navigation": false,
-      "internal_url_regex": "^https?://([\\w-]+\\.)*(copilot\\.microsoft\\.com|login\\.microsoftonline\\.com|login\\.microsoftonline\\.(com|cn|us|de)|login\\.microsoft\\.com|login\\.windows\\.net|login\\.live\\.com|signup\\.live\\.com|account\\.microsoft\\.com|account\\.live\\.com|microsoftonline\\.(com|cn|us|de)|microsoftonline-p\\.com|office\\.com|microsoft\\.com|live\\.com|msauth\\.net|msftauth\\.net|msauthimages\\.net|msftauthimages\\.net)(/|$)",
+      "internal_url_regex": "^https?://([\\w-]+\\.)*(copilot\\.microsoft\\.com|login\\.microsoftonline\\.com|login\\.microsoftonline\\.(com|cn|us|de)|login\\.microsoft\\.com|login\\.windows\\.net|login\\.live\\.com|signup\\.live\\.com|account\\.microsoft\\.com|account\\.live\\.com|microsoftonline\\.(com|cn|us|de)|microsoftonline-p\\.com|office\\.com|microsoft\\.com|live\\.com|msauth\\.net|msftauth\\.net|msauthimages\\.net|msftauthimages\\.net)(/|$)|^https?://.*(msauth|msftauth|oauth|authorize|token|callback|consent|kmsi|signin|login|sso).*",
       "new_window": true,
       "zoom": 100
     }

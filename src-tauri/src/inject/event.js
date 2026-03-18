@@ -342,7 +342,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let internalUrlPattern = null;
   if (internalUrlRegex) {
     try {
-      internalUrlPattern = new RegExp(internalUrlRegex);
+      internalUrlPattern = new RegExp(internalUrlRegex, "i");
     } catch (e) {
       console.error("[Pake] Invalid internal_url_regex pattern:", e);
     }
@@ -354,6 +354,16 @@ document.addEventListener("DOMContentLoaded", () => {
       : true;
   const authLog = (...args) => {
     if (DEBUG_AUTH) console.log("[PakeAuthNav]", ...args);
+  };
+
+  const redirectAuthSameWindow = (url, reason) => {
+    const current = window.location.href;
+    authLog("auth -> same window redirect", { url, reason });
+    setTimeout(() => {
+      if (window.location.href === current) {
+        window.location.href = url;
+      }
+    }, 120);
   };
 
   // 全屏状态变化监听器 - 修复全屏时缩放问题
@@ -616,25 +626,15 @@ document.addEventListener("DOMContentLoaded", () => {
         isInternal: internalCheck,
       });
 
-      // Auth links: allow popup when requested, otherwise let navigation proceed
+      // Auth links: force same-window redirect to keep session consistent
       if (isAuthUrl) {
-        if (target === "_blank" || target === "_new") {
-          authLog("anchor auth -> popup", {
-            url: absoluteUrl,
-            target,
-          });
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          const popup = originalWindowOpen.call(
-            window,
-            absoluteUrl,
-            "_blank",
-            "width=1200,height=800,scrollbars=yes,resizable=yes",
-          );
-          if (!popup) window.location.href = absoluteUrl;
-          return;
-        }
-        // _self or no target: let the browser handle normally
+        authLog("anchor auth -> same window", {
+          url: absoluteUrl,
+          target: anchorElement.target || "_self",
+        });
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        redirectAuthSameWindow(absoluteUrl, "anchor");
         return;
       }
 
@@ -739,8 +739,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const urlString = (url || "").toString();
     if (!urlString || urlString.startsWith("about:")) {
       if (auth.isAuthPopupName && auth.isAuthPopupName(name)) {
-        authLog("window.open blank auth -> popup", { name });
-        return originalWindowOpen.call(window, url, name, specs);
+        authLog("window.open blank auth -> blocked", { name });
+        return null;
       }
       return originalWindowOpen.call(window, url, name, specs);
     }
@@ -756,15 +756,9 @@ document.addEventListener("DOMContentLoaded", () => {
         (window.isAuthLink && window.isAuthLink(absoluteUrl));
 
       if (isAuthUrl) {
-        authLog("window.open auth -> popup", { url: absoluteUrl, name });
-        const popup = originalWindowOpen.call(
-          window,
-          absoluteUrl,
-          name || "_blank",
-          specs,
-        );
-        if (!popup) window.location.href = absoluteUrl;
-        return popup;
+        authLog("window.open auth -> same window", { url: absoluteUrl, name });
+        redirectAuthSameWindow(absoluteUrl, "window.open");
+        return null;
       }
 
       // Allow non-Microsoft auth popups to open normally
