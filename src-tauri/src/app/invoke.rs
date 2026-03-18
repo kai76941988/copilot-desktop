@@ -1,3 +1,4 @@
+use crate::memory::{db as memory_db, MemoryRecordMessageParams};
 use crate::util::{check_file_or_append, get_download_message_with_lang, show_toast, MessageType};
 use std::fs::{self, File};
 use std::io::Write;
@@ -129,6 +130,11 @@ pub async fn download_file_by_binary(
             Err(e.to_string())
         }
     }
+}
+
+#[command]
+pub fn memory_record_message(app: AppHandle, params: MemoryRecordMessageParams) -> Result<(), String> {
+    memory_db::record_message(&app, params)
 }
 
 #[command]

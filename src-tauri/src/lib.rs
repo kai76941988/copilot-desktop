@@ -1,5 +1,6 @@
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 mod app;
+mod memory;
 mod util;
 
 use tauri::Manager;
@@ -13,8 +14,8 @@ const WINDOW_SHOW_DELAY: u64 = 50;
 
 use app::{
     invoke::{
-        clear_cache_and_restart, download_file, download_file_by_binary, send_notification,
-        update_theme_mode,
+        clear_cache_and_restart, download_file, download_file_by_binary, memory_record_message,
+        send_notification, update_theme_mode,
     },
     setup::{set_global_shortcut, set_system_tray},
     window::{open_additional_window_safe, set_window, MultiWindowState},
@@ -80,6 +81,7 @@ pub fn run_app() {
             send_notification,
             update_theme_mode,
             clear_cache_and_restart,
+            memory_record_message,
         ])
         .setup(move |app| {
             app.manage(MultiWindowState::new(
