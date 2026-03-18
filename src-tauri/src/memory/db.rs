@@ -1,6 +1,7 @@
 use crate::memory::{
     MemoryCreateProjectParams, MemoryGetContextPackParams, MemoryListSessionsParams,
-    MemoryProjectInfo, MemoryRecordMessageParams, MemorySessionInfo,
+    MemoryProjectInfo, MemoryRecordMessageParams, MemorySearchItem, MemorySearchParams,
+    MemorySessionInfo,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
@@ -671,4 +672,85 @@ pub fn get_context_pack(
         session_summary,
         recent_messages,
     ))
+}
+
+pub fn search_messages(
+    app: &AppHandle,
+    params: MemorySearchParams,
+) -> Result<Vec<MemorySearchItem>, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let query = params.query.trim().to_string();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let limit = params.limit.unwrap_or(50).min(200);
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .map(|t| format!("{}*", t.replace('"', "")))
+        .collect();
+    let fts_query = if tokens.is_empty() {
+        query.clone()
+    } else {
+        tokens.join(" ")
+    };
+
+    let mut out: Vec<MemorySearchItem> = Vec::new();
+    if let Some(project_id) = params.project_id {
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.id, m.project_id, m.session_id, m.role, m.content, m.created_at
+                 FROM messages_fts f
+                 JOIN messages m ON m.id = f.id
+                 WHERE f MATCH ? AND m.project_id = ?
+                 ORDER BY m.created_at DESC
+                 LIMIT ?",
+            )
+            .map_err(|e| format!("Prepare search failed: {}", e))?;
+        let rows = stmt
+            .query_map(params![fts_query, project_id, limit], |row| {
+                Ok(MemorySearchItem {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    session_id: row.get(2)?,
+                    role: row.get(3)?,
+                    content: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| format!("Query search failed: {}", e))?;
+        for r in rows {
+            out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+        }
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.id, m.project_id, m.session_id, m.role, m.content, m.created_at
+                 FROM messages_fts f
+                 JOIN messages m ON m.id = f.id
+                 WHERE f MATCH ?
+                 ORDER BY m.created_at DESC
+                 LIMIT ?",
+            )
+            .map_err(|e| format!("Prepare search failed: {}", e))?;
+        let rows = stmt
+            .query_map(params![fts_query, limit], |row| {
+                Ok(MemorySearchItem {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    session_id: row.get(2)?,
+                    role: row.get(3)?,
+                    content: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| format!("Query search failed: {}", e))?;
+        for r in rows {
+            out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+        }
+    }
+
+    Ok(out)
 }

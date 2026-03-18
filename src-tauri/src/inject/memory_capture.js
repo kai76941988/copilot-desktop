@@ -120,6 +120,110 @@
       true
     );
 
+    function findNewChatButton() {
+      const candidates = Array.from(document.querySelectorAll("button, a"));
+      for (const el of candidates) {
+        const text = (el.innerText || "").toLowerCase();
+        const label = (el.getAttribute("aria-label") || "").toLowerCase();
+        const data = (el.getAttribute("data-testid") || "").toLowerCase();
+        if (
+          text.includes("new chat") ||
+          text.includes("new conversation") ||
+          text.includes("新建") ||
+          label.includes("new chat") ||
+          label.includes("新建") ||
+          data.includes("new-chat") ||
+          data.includes("new_conversation")
+        ) {
+          return el;
+        }
+      }
+      return null;
+    }
+
+    function findInputBox() {
+      const selectors = [
+        "textarea",
+        'div[contenteditable="true"]',
+        'div[role="textbox"]',
+        '[data-testid*="composer"]',
+        '[data-testid*="prompt"]',
+      ];
+      for (const sel of selectors) {
+        const nodes = Array.from(document.querySelectorAll(sel));
+        for (const el of nodes) {
+          if (isVisible(el)) return el;
+        }
+      }
+      return null;
+    }
+
+    function setInputText(el, text) {
+      if (!el) return false;
+      try {
+        el.focus();
+        if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+          el.value = text;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        }
+        if (el.isContentEditable) {
+          el.innerText = text;
+          el.dispatchEvent(
+            new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" })
+          );
+          return true;
+        }
+      } catch (e) {
+        console.warn(TAG, "setInputText failed", e);
+      }
+      return false;
+    }
+
+    function handleContextPack(payload) {
+      const text = (payload && payload.text) || payload || "";
+      if (!text) return;
+      const forceNewChat = !!(payload && payload.forceNewChat);
+      if (forceNewChat) {
+        const btn = findNewChatButton();
+        if (btn) {
+          btn.click();
+        }
+        setTimeout(() => {
+          const input = findInputBox();
+          if (input) {
+            setInputText(input, text);
+          }
+        }, 800);
+        return;
+      }
+
+      const input = findInputBox();
+      if (input) {
+        setInputText(input, text);
+      }
+    }
+
+    if (TAURI.event && TAURI.event.listen) {
+      TAURI.event.listen("memory_set_project", (event) => {
+        try {
+          const projectId = event?.payload?.project_id || event?.payload;
+          if (projectId) {
+            localStorage.setItem(PROJECT_KEY, projectId);
+            sessionStorage.removeItem(SESSION_KEY);
+            console.log(TAG, "active project set:", projectId);
+          }
+        } catch (err) {
+          console.warn(TAG, "set project failed:", err);
+        }
+      });
+
+      TAURI.event.listen("memory_context_pack", (event) => {
+        handleContextPack(event?.payload);
+      });
+    }
+
     function isVisible(el) {
       if (!el || !(el instanceof Element)) return false;
       const style = window.getComputedStyle(el);

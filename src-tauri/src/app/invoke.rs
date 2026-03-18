@@ -1,7 +1,10 @@
+use crate::app::window::open_memory_hub_window;
 use crate::memory::{
     db as memory_db, MemoryCreateProjectParams, MemoryGetContextPackParams,
-    MemoryListSessionsParams, MemoryProjectInfo, MemoryRecordMessageParams, MemorySessionInfo,
+    MemoryContinueParams, MemoryListSessionsParams, MemoryProjectInfo, MemoryRecordMessageParams,
+    MemorySearchParams, MemorySearchItem, MemorySessionInfo, MemorySetProjectParams,
 };
+use serde_json::json;
 use crate::util::{check_file_or_append, get_download_message_with_lang, show_toast, MessageType};
 use std::fs::{self, File};
 use std::io::Write;
@@ -167,6 +170,57 @@ pub fn memory_get_context_pack(
     params: MemoryGetContextPackParams,
 ) -> Result<String, String> {
     memory_db::get_context_pack(&app, params)
+}
+
+#[command]
+pub fn memory_search_messages(
+    app: AppHandle,
+    params: MemorySearchParams,
+) -> Result<Vec<MemorySearchItem>, String> {
+    memory_db::search_messages(&app, params)
+}
+
+#[command]
+pub fn memory_continue_project(app: AppHandle, params: MemoryContinueParams) -> Result<String, String> {
+    let pack = memory_db::get_context_pack(
+        &app,
+        MemoryGetContextPackParams {
+            project_id: params.project_id.clone(),
+            session_id: params.session_id.clone(),
+        },
+    )?;
+
+    if let Some(window) = app.get_webview_window("pake") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let payload = json!({
+            "text": pack,
+            "forceNewChat": params.open_new.unwrap_or(true)
+        });
+        window
+            .emit("memory_context_pack", payload)
+            .map_err(|e| format!("Emit context pack failed: {}", e))?;
+    }
+
+    Ok(pack)
+}
+
+#[command]
+pub fn memory_set_active_project(
+    app: AppHandle,
+    params: MemorySetProjectParams,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("pake") {
+        window
+            .emit("memory_set_project", json!({ "project_id": params.project_id }))
+            .map_err(|e| format!("Emit set project failed: {}", e))?;
+    }
+    Ok(())
+}
+
+#[command]
+pub fn memory_open_hub(app: AppHandle) -> Result<(), String> {
+    open_memory_hub_window(&app).map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[command]

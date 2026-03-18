@@ -29,9 +29,15 @@ output
 *.app
 
 dist
+!dist/
+dist/*
 !dist/about_pake.html
 !dist/cli.js
 !dist/.gitkeep
+!dist/memory/
+!dist/memory/index.html
+!dist/memory/app.js
+!dist/memory/style.css
 src-tauri/.cargo/config.toml
 src-tauri/.cargo/
 .next

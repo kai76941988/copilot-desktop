@@ -33,6 +33,25 @@ pub struct MemoryGetContextPackParams {
     pub session_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MemorySearchParams {
+    pub query: String,
+    pub project_id: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemoryContinueParams {
+    pub project_id: Option<String>,
+    pub session_id: Option<String>,
+    pub open_new: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemorySetProjectParams {
+    pub project_id: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MemoryProjectInfo {
     pub project_id: String,
@@ -50,4 +69,14 @@ pub struct MemorySessionInfo {
     pub updated_at: i64,
     pub source_url: Option<String>,
     pub archived: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemorySearchItem {
+    pub id: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub role: String,
+    pub content: String,
+    pub created_at: i64,
 }

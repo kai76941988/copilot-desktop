@@ -1,4 +1,4 @@
-use crate::app::window::open_additional_window_safe;
+use crate::app::window::{open_additional_window_safe, open_memory_hub_window};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -23,17 +23,18 @@ pub fn set_system_tray(
     }
 
     let new_window = MenuItemBuilder::with_id("new_window", "New Window").build(app)?;
+    let memory_hub = MenuItemBuilder::with_id("memory_hub", "Memory Hub").build(app)?;
     let hide_app = MenuItemBuilder::with_id("hide_app", "Hide").build(app)?;
     let show_app = MenuItemBuilder::with_id("show_app", "Show").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
 
     let menu = if allow_multi_window {
         MenuBuilder::new(app)
-            .items(&[&new_window, &hide_app, &show_app, &quit])
+            .items(&[&new_window, &memory_hub, &hide_app, &show_app, &quit])
             .build()?
     } else {
         MenuBuilder::new(app)
-            .items(&[&hide_app, &show_app, &quit])
+            .items(&[&memory_hub, &hide_app, &show_app, &quit])
             .build()?
     };
 
@@ -45,6 +46,9 @@ pub fn set_system_tray(
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "new_window" => {
                 open_additional_window_safe(app);
+            }
+            "memory_hub" => {
+                let _ = open_memory_hub_window(app);
             }
             "hide_app" => {
                 if let Some(window) = app.get_webview_window("pake") {

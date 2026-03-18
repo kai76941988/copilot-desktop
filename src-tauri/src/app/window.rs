@@ -92,6 +92,37 @@ pub fn open_additional_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     build_window_with_label(app, &state.pake_config, &state.tauri_config, &label, None)
 }
 
+pub fn open_memory_hub_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+    if let Some(existing) = app.get_webview_window("pake-memory") {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(existing);
+    }
+
+    let state = app.state::<MultiWindowState>();
+    let package_name = state
+        .tauri_config
+        .clone()
+        .product_name
+        .unwrap_or_else(|| "pake".to_string());
+    let udf_info: WebviewDataDir = get_webview_data_dir(app, &package_name);
+
+    let url = WebviewUrl::App(PathBuf::from("memory/index.html"));
+
+    let mut builder = WebviewWindowBuilder::new(app, "pake-memory", url)
+        .title("Copilot Memory Hub")
+        .visible(true)
+        .resizable(true)
+        .inner_size(980.0, 720.0);
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.data_directory(udf_info.profile_dir.clone()).theme(None);
+    }
+
+    builder.build()
+}
+
 pub fn open_auth_window_with_url(app: &AppHandle, url: Url) -> tauri::Result<WebviewWindow> {
     if let Some(existing) = app.get_webview_window("pake-auth") {
         let url_str = url.as_str().to_string();
