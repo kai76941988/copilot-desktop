@@ -52,6 +52,16 @@
       'button[aria-label*="Sign up"]',
     ];
 
+    const AUTH_FORM_SELECTORS = [
+      'input[type="email"]',
+      'input[type="password"]',
+      'input[name="loginfmt"]',
+      "#i0116",
+      "#i0118",
+      'form[action*="login"]',
+      '[data-testid*="login"]',
+    ];
+
     const LOGGED_IN_TEXT_PATTERNS = [
       /new chat/i,
       /new conversation/i,
@@ -174,6 +184,12 @@
         return false;
       }
 
+      const authFormEl = findVisibleBySelectors(AUTH_FORM_SELECTORS);
+      if (authFormEl) {
+        mainReadySince = 0;
+        return false;
+      }
+
       const loggedInEl =
         findVisibleBySelectors(LOGGED_IN_SELECTORS) ||
         findVisibleTextMatch(LOGGED_IN_TEXT_PATTERNS);
@@ -189,7 +205,7 @@
 
       if (inputEnabled) {
         if (!mainReadySince) mainReadySince = Date.now();
-        if (Date.now() - mainReadySince > 5000) return true;
+        if (Date.now() - mainReadySince > 8000) return true;
       } else {
         mainReadySince = 0;
       }
