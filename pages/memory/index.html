@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Memory Hub</title>
+    <link rel="stylesheet" href="../../css/base.css" />
+    <link rel="stylesheet" href="memory.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="top">
+        <div class="brand">Copilot Memory Hub</div>
+        <div class="actions">
+          <button id="btnRefresh">Refresh</button>
+          <button id="btnNewProject">New Project</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <aside class="projects">
+          <div class="section-title">Projects</div>
+          <div id="projectList" class="list"></div>
+        </aside>
+
+        <main class="main">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Sessions</div>
+              <div class="panel-actions">
+                <button id="btnSetActive">Set Active</button>
+              </div>
+            </div>
+            <div id="sessionList" class="list sessions"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Project Summary</div>
+              <div class="panel-actions">
+                <button id="btnRefreshSummary">Refresh</button>
+              </div>
+            </div>
+            <div id="projectSummary" class="summary-box">No summary yet.</div>
+            <div class="section-title">Summary Blocks</div>
+            <div id="summaryList" class="list summaries"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Session Messages</div>
+              <div class="panel-actions">
+                <button id="btnLoadMore">Load More</button>
+              </div>
+            </div>
+            <div id="messageList" class="list messages"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Context Pack</div>
+              <div class="panel-actions">
+                <button id="btnGenerate">Generate</button>
+                <button id="btnCopy">Copy</button>
+              </div>
+            </div>
+            <textarea id="contextPack" placeholder="Context pack will appear here..."></textarea>
+          </div>
+        </main>
+
+        <section class="search">
+          <div class="section-title">Search</div>
+          <div class="search-bar">
+            <input id="searchInput" placeholder="Search messages..." />
+            <select id="searchScope">
+              <option value="messages">Messages</option>
+              <option value="summaries">Summaries</option>
+            </select>
+            <button id="btnSearch">Search</button>
+          </div>
+          <label class="checkbox">
+            <input type="checkbox" id="searchProjectOnly" checked />
+            Current project only
+          </label>
+          <div id="searchResults" class="list results"></div>
+        </section>
+      </div>
+
+      <div id="status" class="status">Ready</div>
+    </div>
+    <script src="memory.js"></script>
+  </body>
+</html>
