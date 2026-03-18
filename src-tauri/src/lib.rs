@@ -20,6 +20,8 @@ use app::{
         memory_continue_project, memory_list_summaries, memory_list_messages,
         memory_set_active_project, memory_open_hub, memory_get_summarizer_config,
         memory_set_summarizer_config, memory_refresh_summaries,
+        memory_set_message_tags, memory_auto_tag_messages, memory_list_tags,
+        memory_export_project,
         send_notification, update_theme_mode,
     },
     setup::{set_global_shortcut, set_system_tray},
@@ -101,6 +103,10 @@ pub fn run_app() {
             memory_get_summarizer_config,
             memory_set_summarizer_config,
             memory_refresh_summaries,
+            memory_set_message_tags,
+            memory_auto_tag_messages,
+            memory_list_tags,
+            memory_export_project,
         ])
         .setup(move |app| {
             app.manage(MultiWindowState::new(

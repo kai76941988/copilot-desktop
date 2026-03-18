@@ -5,6 +5,7 @@ use crate::memory::{
     MemoryListSummariesParams, MemoryProjectInfo, MemoryRecordMessageParams, MemorySearchParams,
     MemorySearchItem, MemorySearchSummariesParams, MemorySessionInfo, MemorySetProjectParams,
     MemorySummaryInfo, MemoryMessageInfo, SummarizerConfig, MemoryRefreshSummariesParams,
+    MemorySetMessageTagsParams, MemoryAutoTagParams, MemoryTagInfo, MemoryExportInfo,
 };
 use serde_json::json;
 use crate::util::{check_file_or_append, get_download_message_with_lang, show_toast, MessageType};
@@ -266,6 +267,35 @@ pub async fn memory_refresh_summaries(
     params: MemoryRefreshSummariesParams,
 ) -> Result<(), String> {
     memory_db::refresh_summaries(&app, params).await
+}
+
+#[command]
+pub fn memory_set_message_tags(
+    app: AppHandle,
+    params: MemorySetMessageTagsParams,
+) -> Result<(), String> {
+    memory_db::set_message_tags(&app, params)
+}
+
+#[command]
+pub fn memory_auto_tag_messages(
+    app: AppHandle,
+    params: MemoryAutoTagParams,
+) -> Result<i64, String> {
+    memory_db::auto_tag_messages(&app, params)
+}
+
+#[command]
+pub fn memory_list_tags(app: AppHandle) -> Result<Vec<MemoryTagInfo>, String> {
+    memory_db::list_tags(&app)
+}
+
+#[command]
+pub fn memory_export_project(
+    app: AppHandle,
+    project_id: Option<String>,
+) -> Result<MemoryExportInfo, String> {
+    memory_db::export_project_jsonl(&app, project_id)
 }
 
 #[command]

@@ -3,6 +3,7 @@ use crate::memory::{
     MemoryListMessagesParams, MemoryListSummariesParams, MemoryMessageInfo, MemoryProjectInfo,
     MemoryRecordMessageParams, MemorySearchItem, MemorySearchParams, MemorySearchSummariesParams,
     MemorySessionInfo, MemorySummaryInfo, MemoryRefreshSummariesParams, SummarizerConfig,
+    MemorySetMessageTagsParams, MemoryAutoTagParams, MemoryTagInfo, MemoryExportInfo,
 };
 use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 use tauri_plugin_http::reqwest::ClientBuilder;
+use std::fs::File;
+use std::io::Write;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -277,6 +280,56 @@ fn default_summarizer_config() -> SummarizerConfig {
         prompt: Some("Summarize the conversation into concise bullets. Keep factual, include decisions, progress, TODOs, constraints.".to_string()),
         timeout_ms: Some(15000),
     }
+}
+
+fn clean_tag(tag: &str) -> Option<String> {
+    let trimmed = tag.trim().trim_start_matches('#');
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_lowercase())
+    }
+}
+
+fn split_tags(tags: &str) -> Vec<String> {
+    tags.split(',')
+        .filter_map(clean_tag)
+        .collect::<Vec<_>>()
+}
+
+fn tags_to_string(tags: &[String]) -> String {
+    tags.iter().filter_map(|t| clean_tag(t)).collect::<Vec<_>>().join(",")
+}
+
+fn extract_tags_from_text(text: &str) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for word in text.split_whitespace() {
+        if word.starts_with('#') && word.len() > 1 {
+            if let Some(t) = clean_tag(word) {
+                tags.push(t);
+            }
+        }
+    }
+    tags
+}
+
+fn auto_tag_keywords(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let mut tags = Vec::new();
+    let rules = vec![
+        ("todo", vec!["todo", "待办", "下一步", "计划"]),
+        ("bug", vec!["bug", "错误", "异常", "crash", "失败"]),
+        ("design", vec!["设计", "架构", "方案", "design"]),
+        ("auth", vec!["登录", "认证", "token", "oauth"]),
+        ("summary", vec!["总结", "摘要", "summary"]),
+        ("performance", vec!["慢", "卡", "性能", "performance"]),
+    ];
+    for (tag, keys) in rules {
+        if keys.iter().any(|k| lower.contains(k)) {
+            tags.push(tag.to_string());
+        }
+    }
+    tags
 }
 
 fn ensure_project(conn: &Connection, project_id: &str, ts: i64) -> Result<(), String> {
@@ -763,6 +816,16 @@ pub fn record_message(app: &AppHandle, params: MemoryRecordMessageParams) -> Res
 
     let message_id = Uuid::new_v4().to_string();
     let message_order = message_order.unwrap_or(ts);
+    let mut merged_tags: Vec<String> = Vec::new();
+    if let Some(tag_string) = tags.clone() {
+        merged_tags.extend(split_tags(&tag_string));
+    }
+    merged_tags.extend(auto_tag_keywords(&content));
+    let tag_str = if merged_tags.is_empty() {
+        tags.clone()
+    } else {
+        Some(tags_to_string(&merged_tags))
+    };
 
     conn.execute(
         "INSERT INTO messages (id, session_id, project_id, role, content, created_at, source, message_order, summary_group_id, tags, metadata_json)
@@ -777,7 +840,7 @@ pub fn record_message(app: &AppHandle, params: MemoryRecordMessageParams) -> Res
             source,
             message_order,
             summary_group_id,
-            tags,
+            tag_str.clone(),
             metadata_json
         ],
     )
@@ -810,6 +873,105 @@ pub fn set_summarizer_config(app: &AppHandle, cfg: SummarizerConfig) -> Result<(
     let raw = serde_json::to_string(&cfg).map_err(|e| format!("Serialize config failed: {}", e))?;
     set_setting(&conn, "summarizer_config", &raw)?;
     Ok(())
+}
+
+pub fn set_message_tags(
+    app: &AppHandle,
+    params: MemorySetMessageTagsParams,
+) -> Result<(), String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+    let tag_str = tags_to_string(&params.tags);
+    conn.execute(
+        "UPDATE messages SET tags = ? WHERE id = ?",
+        params![tag_str, params.message_id],
+    )
+    .map_err(|e| format!("Set message tags failed: {}", e))?;
+    Ok(())
+}
+
+pub fn list_tags(app: &AppHandle) -> Result<Vec<MemoryTagInfo>, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT tags, COUNT(1) FROM messages WHERE tags IS NOT NULL AND tags <> '' GROUP BY tags",
+        )
+        .map_err(|e| format!("Prepare list tags failed: {}", e))?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .map_err(|e| format!("Query list tags failed: {}", e))?;
+
+    let mut map = std::collections::HashMap::<String, i64>::new();
+    for r in rows {
+        let (tags, count) = r.map_err(|e| format!("Row parse failed: {}", e))?;
+        for tag in split_tags(&tags) {
+            *map.entry(tag).or_insert(0) += count;
+        }
+    }
+
+    let mut out: Vec<MemoryTagInfo> = map
+        .into_iter()
+        .map(|(tag, count)| MemoryTagInfo { tag, count })
+        .collect();
+    out.sort_by(|a, b| b.count.cmp(&a.count));
+    Ok(out)
+}
+
+pub fn auto_tag_messages(
+    app: &AppHandle,
+    params: MemoryAutoTagParams,
+) -> Result<i64, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let mut sql = String::from("SELECT id, content, tags FROM messages");
+    let mut values: Vec<Value> = Vec::new();
+    if let Some(project_id) = params.project_id {
+        sql.push_str(" WHERE project_id = ?");
+        values.push(Value::from(project_id));
+    }
+    if let Some(session_id) = params.session_id {
+        if values.is_empty() {
+            sql.push_str(" WHERE session_id = ?");
+        } else {
+            sql.push_str(" AND session_id = ?");
+        }
+        values.push(Value::from(session_id));
+    }
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("Prepare auto tag failed: {}", e))?;
+
+    let rows = stmt
+        .query_map(params_from_iter(values), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(|e| format!("Query auto tag failed: {}", e))?;
+
+    let mut updated = 0;
+    for r in rows {
+        let (id, content, existing) = r.map_err(|e| format!("Row parse failed: {}", e))?;
+        let mut tags = existing
+            .as_deref()
+            .map(split_tags)
+            .unwrap_or_default();
+        tags.extend(auto_tag_keywords(&content));
+        let tag_str = tags_to_string(&tags);
+        if tag_str.is_empty() {
+            continue;
+        }
+        conn.execute("UPDATE messages SET tags = ? WHERE id = ?", params![tag_str, id])
+            .map_err(|e| format!("Update tags failed: {}", e))?;
+        updated += 1;
+    }
+
+    Ok(updated)
 }
 
 pub fn create_project(
@@ -1468,4 +1630,61 @@ pub async fn refresh_summaries(
     }
 
     Ok(())
+}
+
+pub fn export_project_jsonl(
+    app: &AppHandle,
+    project_id: Option<String>,
+) -> Result<MemoryExportInfo, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let pid = project_id.unwrap_or_else(|| "default".to_string());
+    let export_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().data_dir())
+        .map_err(|e| format!("Get export dir failed: {}", e))?;
+    let file_name = format!("copilot_memory_{}_{}.jsonl", pid, now_ms());
+    let export_path = export_dir.join(file_name);
+
+    let mut file =
+        File::create(&export_path).map_err(|e| format!("Create export file failed: {}", e))?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, project_id, role, content, created_at, tags, metadata_json
+             FROM messages
+             WHERE project_id = ?
+             ORDER BY created_at ASC",
+        )
+        .map_err(|e| format!("Prepare export failed: {}", e))?;
+
+    let rows = stmt
+        .query_map(params![pid], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "session_id": row.get::<_, String>(1)?,
+                "project_id": row.get::<_, String>(2)?,
+                "role": row.get::<_, String>(3)?,
+                "content": row.get::<_, String>(4)?,
+                "created_at": row.get::<_, i64>(5)?,
+                "tags": row.get::<_, Option<String>>(6)?,
+                "metadata": row.get::<_, Option<String>>(7)?
+            }))
+        })
+        .map_err(|e| format!("Query export failed: {}", e))?;
+
+    let mut count = 0;
+    for r in rows {
+        let value = r.map_err(|e| format!("Row parse failed: {}", e))?;
+        let line = serde_json::to_string(&value).map_err(|e| format!("Serialize failed: {}", e))?;
+        writeln!(file, "{}", line).map_err(|e| format!("Write failed: {}", e))?;
+        count += 1;
+    }
+
+    Ok(MemoryExportInfo {
+        export_path: export_path.to_string_lossy().to_string(),
+        message_count: count,
+    })
 }

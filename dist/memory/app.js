@@ -23,6 +23,7 @@ const elSummarizerEndpoint = document.getElementById("summarizerEndpoint");
 const elSummarizerApiKey = document.getElementById("summarizerApiKey");
 const elSummarizerModel = document.getElementById("summarizerModel");
 const elSummarizerPrompt = document.getElementById("summarizerPrompt");
+const elTagList = document.getElementById("tagList");
 
 let messageOffset = 0;
 const messageLimit = 40;
@@ -169,6 +170,7 @@ async function loadProjects() {
   await loadSummaries();
   await loadMessages(false);
   await loadSummarizerConfig();
+  await loadTags();
   setStatus("Ready");
 }
 
@@ -237,6 +239,26 @@ async function loadSummarizerConfig() {
   }
 }
 
+async function loadTags() {
+  if (!invoke) return;
+  const tags = await invoke("memory_list_tags");
+  renderTags(tags || []);
+}
+
+function renderTags(items) {
+  elTagList.innerHTML = "";
+  if (!items.length) {
+    elTagList.innerHTML = '<div class="list-item">No tags yet</div>';
+    return;
+  }
+  items.slice(0, 20).forEach((t) => {
+    const item = document.createElement("div");
+    item.className = "list-item";
+    item.innerHTML = `<span class="tag-pill">#${t.tag}</span><small>${t.count}</small>`;
+    elTagList.appendChild(item);
+  });
+}
+
 async function saveSummarizerConfig() {
   if (!invoke) return;
   const cfg = {
@@ -260,6 +282,24 @@ async function runSummarizer() {
   });
   await loadSummaries();
   setStatus("Summaries refreshed");
+}
+
+async function runAutoTag() {
+  if (!invoke) return;
+  setStatus("Auto tagging...");
+  const count = await invoke("memory_auto_tag_messages", {
+    project_id: state.selectedProjectId,
+    session_id: state.selectedSessionId,
+  });
+  await loadTags();
+  setStatus(`Auto tagged ${count} messages`);
+}
+
+async function runExport() {
+  if (!invoke) return;
+  setStatus("Exporting...");
+  const info = await invoke("memory_export_project", state.selectedProjectId);
+  setStatus(`Exported ${info.message_count} messages to ${info.export_path}`);
 }
 
 async function selectProject(projectId) {
@@ -352,6 +392,8 @@ document.getElementById("btnRefreshSummary").onclick = loadSummaries;
 document.getElementById("btnLoadMore").onclick = () => loadMessages(true);
 document.getElementById("btnSaveSummarizer").onclick = saveSummarizerConfig;
 document.getElementById("btnRunSummarizer").onclick = runSummarizer;
+document.getElementById("btnAutoTag").onclick = runAutoTag;
+document.getElementById("btnExport").onclick = runExport;
 elSearchInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     doSearch();

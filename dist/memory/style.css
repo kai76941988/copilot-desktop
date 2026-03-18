@@ -207,6 +207,20 @@ textarea {
   gap: 6px;
 }
 
+.tags .list-item {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tag-pill {
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
 button {
   border: none;
   background: var(--accent);

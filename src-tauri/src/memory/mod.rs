@@ -90,6 +90,30 @@ pub struct SummarizerConfig {
     pub timeout_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MemorySetMessageTagsParams {
+    pub message_id: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemoryAutoTagParams {
+    pub project_id: Option<String>,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemoryTagInfo {
+    pub tag: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemoryExportInfo {
+    pub export_path: String,
+    pub message_count: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct MemoryProjectInfo {
     pub project_id: String,
