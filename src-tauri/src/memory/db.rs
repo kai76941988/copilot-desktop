@@ -1,5 +1,8 @@
-use crate::memory::MemoryRecordMessageParams;
-use rusqlite::{params, Connection};
+use crate::memory::{
+    MemoryCreateProjectParams, MemoryGetContextPackParams, MemoryListSessionsParams,
+    MemoryProjectInfo, MemoryRecordMessageParams, MemorySessionInfo,
+};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
@@ -10,6 +13,48 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+const CHUNK_SIZE: i64 = 12;
+const SESSION_SUMMARY_CHUNKS: i64 = 3;
+const PROJECT_SUMMARY_SESSIONS: i64 = 3;
+const SUMMARY_MAX_CHARS: usize = 800;
+
+fn collapse_whitespace(input: &str) -> String {
+    input
+        .split_whitespace()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn summarize_text(input: &str, max_chars: usize) -> String {
+    let compact = collapse_whitespace(input);
+    if compact.len() <= max_chars {
+        compact
+    } else {
+        let mut s = compact[..max_chars].to_string();
+        s.push_str("...");
+        s
+    }
+}
+
+fn extract_lines_by_keywords(input: &str, keywords: &[&str], max_lines: usize) -> String {
+    let mut result: Vec<String> = Vec::new();
+    for line in input.lines() {
+        let lower = line.to_lowercase();
+        if keywords.iter().any(|k| lower.contains(k)) {
+            result.push(line.trim().to_string());
+        }
+        if result.len() >= max_lines {
+            break;
+        }
+    }
+    if result.is_empty() {
+        "暂无".to_string()
+    } else {
+        result.join("\n")
+    }
 }
 
 fn get_memory_db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -149,6 +194,241 @@ fn ensure_session(
     Ok(())
 }
 
+fn get_message_count(conn: &Connection, session_id: &str) -> Result<i64, String> {
+    let mut stmt = conn
+        .prepare("SELECT COUNT(1) FROM messages WHERE session_id = ?")
+        .map_err(|e| format!("Prepare count failed: {}", e))?;
+    let count: i64 = stmt
+        .query_row(params![session_id], |row| row.get(0))
+        .map_err(|e| format!("Query count failed: {}", e))?;
+    Ok(count)
+}
+
+fn fetch_recent_messages(
+    conn: &Connection,
+    session_id: &str,
+    limit: i64,
+) -> Result<Vec<(String, String, i64)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT role, content, message_order
+             FROM messages
+             WHERE session_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| format!("Prepare fetch messages failed: {}", e))?;
+
+    let rows = stmt
+        .query_map(params![session_id, limit], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| format!("Query messages failed: {}", e))?;
+
+    let mut out: Vec<(String, String, i64)> = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+    }
+
+    out.reverse();
+    Ok(out)
+}
+
+fn build_chunk_summary(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Option<(i64, i64, String)>, String> {
+    let messages = fetch_recent_messages(conn, session_id, CHUNK_SIZE)?;
+    if messages.len() < CHUNK_SIZE as usize {
+        return Ok(None);
+    }
+
+    let range_start = messages.first().map(|m| m.2).unwrap_or(0);
+    let range_end = messages.last().map(|m| m.2).unwrap_or(0);
+    let mut lines: Vec<String> = Vec::new();
+    for (role, content, _) in messages {
+        let prefix = if role == "user" { "U" } else { "A" };
+        lines.push(format!("{}: {}", prefix, content));
+    }
+    let joined = lines.join("\n");
+    let summary = summarize_text(&joined, SUMMARY_MAX_CHARS);
+    Ok(Some((range_start, range_end, summary)))
+}
+
+fn get_last_chunk_end(conn: &Connection, session_id: &str) -> Result<Option<i64>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT source_range_end
+             FROM summaries
+             WHERE session_id = ? AND summary_type = 'chunk'
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .map_err(|e| format!("Prepare last chunk failed: {}", e))?;
+    let row = stmt
+        .query_row(params![session_id], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("Query last chunk failed: {}", e))?;
+    Ok(row)
+}
+
+fn upsert_summary(
+    conn: &Connection,
+    project_id: &str,
+    session_id: Option<&str>,
+    summary_type: &str,
+    content: &str,
+    range_start: Option<i64>,
+    range_end: Option<i64>,
+) -> Result<(), String> {
+    if summary_type != "chunk" {
+        let _ = conn.execute(
+            "DELETE FROM summaries WHERE summary_type = ? AND project_id = ? AND session_id IS ?",
+            params![summary_type, project_id, session_id],
+        );
+    }
+
+    let summary_id = Uuid::new_v4().to_string();
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO summaries (summary_id, project_id, session_id, summary_type, source_range_start, source_range_end, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            summary_id,
+            project_id,
+            session_id,
+            summary_type,
+            range_start,
+            range_end,
+            content,
+            ts
+        ],
+    )
+    .map_err(|e| format!("Insert summary failed: {}", e))?;
+    Ok(())
+}
+
+fn build_session_summary(
+    conn: &Connection,
+    project_id: &str,
+    session_id: &str,
+) -> Result<String, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT content FROM summaries
+             WHERE session_id = ? AND summary_type = 'chunk'
+             ORDER BY created_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| format!("Prepare session summary failed: {}", e))?;
+
+    let rows = stmt
+        .query_map(params![session_id, SESSION_SUMMARY_CHUNKS], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Query session summaries failed: {}", e))?;
+
+    let mut chunks: Vec<String> = Vec::new();
+    for r in rows {
+        chunks.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+    }
+
+    if chunks.is_empty() {
+        let messages = fetch_recent_messages(conn, session_id, CHUNK_SIZE)?;
+        let joined = messages
+            .into_iter()
+            .map(|(role, content, _)| format!("{}: {}", role, content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Ok(summarize_text(&joined, SUMMARY_MAX_CHARS));
+    }
+
+    let joined = chunks.into_iter().rev().collect::<Vec<_>>().join("\n");
+    Ok(summarize_text(&joined, SUMMARY_MAX_CHARS))
+}
+
+fn build_project_summary(conn: &Connection, project_id: &str) -> Result<String, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT content FROM summaries
+             WHERE project_id = ? AND summary_type = 'session'
+             ORDER BY created_at DESC
+             LIMIT ?",
+        )
+        .map_err(|e| format!("Prepare project summary failed: {}", e))?;
+
+    let rows = stmt
+        .query_map(params![project_id, PROJECT_SUMMARY_SESSIONS], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|e| format!("Query project summaries failed: {}", e))?;
+
+    let mut items: Vec<String> = Vec::new();
+    for r in rows {
+        items.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+    }
+
+    if items.is_empty() {
+        return Ok("暂无项目摘要".to_string());
+    }
+
+    let joined = items.into_iter().rev().collect::<Vec<_>>().join("\n");
+    Ok(summarize_text(&joined, SUMMARY_MAX_CHARS))
+}
+
+fn maybe_update_summaries(
+    conn: &Connection,
+    project_id: &str,
+    session_id: &str,
+) -> Result<(), String> {
+    let count = get_message_count(conn, session_id)?;
+    if count == 0 {
+        return Ok(());
+    }
+
+    let should_make_chunk = count % CHUNK_SIZE == 0;
+    if should_make_chunk {
+        let last_chunk_end = get_last_chunk_end(conn, session_id)?;
+        if let Some((range_start, range_end, summary)) = build_chunk_summary(conn, session_id)? {
+            if last_chunk_end.unwrap_or(-1) != range_end {
+                upsert_summary(
+                    conn,
+                    project_id,
+                    Some(session_id),
+                    "chunk",
+                    &summary,
+                    Some(range_start),
+                    Some(range_end),
+                )?;
+            }
+        }
+    }
+
+    if should_make_chunk || count == 1 {
+        let session_summary = build_session_summary(conn, project_id, session_id)?;
+        upsert_summary(
+            conn,
+            project_id,
+            Some(session_id),
+            "session",
+            &session_summary,
+            None,
+            None,
+        )?;
+
+        let project_summary = build_project_summary(conn, project_id)?;
+        upsert_summary(
+            conn,
+            project_id,
+            None,
+            "project",
+            &project_summary,
+            None,
+            None,
+        )?;
+    }
+
+    Ok(())
+}
+
 pub fn record_message(app: &AppHandle, params: MemoryRecordMessageParams) -> Result<(), String> {
     let conn = open_connection(app)?;
     init_schema(&conn)?;
@@ -201,5 +481,194 @@ pub fn record_message(app: &AppHandle, params: MemoryRecordMessageParams) -> Res
         params![message_id, project_id, session_id, &role, &content],
     );
 
+    let _ = maybe_update_summaries(&conn, &project_id, &session_id);
+
     Ok(())
+}
+
+pub fn create_project(
+    app: &AppHandle,
+    params: MemoryCreateProjectParams,
+) -> Result<String, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let project_id = Uuid::new_v4().to_string();
+    let ts = now_ms();
+    conn.execute(
+        "INSERT INTO projects (project_id, name, description, created_at, updated_at, pinned) VALUES (?, ?, ?, ?, ?, 0)",
+        params![project_id, params.name, params.description, ts, ts],
+    )
+    .map_err(|e| format!("Create project failed: {}", e))?;
+
+    Ok(project_id)
+}
+
+pub fn list_projects(app: &AppHandle) -> Result<Vec<MemoryProjectInfo>, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT project_id, name, description, updated_at, pinned
+             FROM projects
+             ORDER BY pinned DESC, updated_at DESC
+             LIMIT 200",
+        )
+        .map_err(|e| format!("Prepare list projects failed: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(MemoryProjectInfo {
+                project_id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                updated_at: row.get(3)?,
+                pinned: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("Query projects failed: {}", e))?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+    }
+    Ok(out)
+}
+
+pub fn list_sessions(
+    app: &AppHandle,
+    params: MemoryListSessionsParams,
+) -> Result<Vec<MemorySessionInfo>, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT session_id, project_id, title, updated_at, source_url, archived
+             FROM sessions
+             WHERE project_id = ?
+             ORDER BY updated_at DESC
+             LIMIT 200",
+        )
+        .map_err(|e| format!("Prepare list sessions failed: {}", e))?;
+
+    let rows = stmt
+        .query_map(params![params.project_id], |row| {
+            Ok(MemorySessionInfo {
+                session_id: row.get(0)?,
+                project_id: row.get(1)?,
+                title: row.get(2)?,
+                updated_at: row.get(3)?,
+                source_url: row.get(4)?,
+                archived: row.get(5)?,
+            })
+        })
+        .map_err(|e| format!("Query sessions failed: {}", e))?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+    }
+    Ok(out)
+}
+
+fn get_latest_summary(
+    conn: &Connection,
+    project_id: &str,
+    session_id: Option<&str>,
+    summary_type: &str,
+) -> Result<Option<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT content FROM summaries
+             WHERE project_id = ?
+             AND summary_type = ?
+             AND session_id IS ?
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .map_err(|e| format!("Prepare latest summary failed: {}", e))?;
+
+    let row = stmt
+        .query_row(params![project_id, summary_type, session_id], |r| r.get(0))
+        .optional()
+        .map_err(|e| format!("Query latest summary failed: {}", e))?;
+    Ok(row)
+}
+
+fn build_context_pack_text(
+    project_summary: Option<String>,
+    session_summary: Option<String>,
+    recent_messages: Vec<String>,
+) -> String {
+    let background = project_summary.clone().unwrap_or_else(|| "暂无".to_string());
+    let key_facts = project_summary.clone().unwrap_or_else(|| "暂无".to_string());
+    let progress = session_summary.unwrap_or_else(|| "暂无".to_string());
+    let recent = if recent_messages.is_empty() {
+        "暂无".to_string()
+    } else {
+        recent_messages.join("\n")
+    };
+
+    let todo = extract_lines_by_keywords(&recent, &["todo", "待办", "next", "计划"], 5);
+    let constraints = extract_lines_by_keywords(&recent, &["must", "禁止", "不要", "约束"], 5);
+
+    format!(
+        "【项目背景】\n{background}\n\n【关键结论】\n{key_facts}\n\n【最近进展】\n{progress}\n\n【最近对话摘录】\n{recent}\n\n【当前待办】\n{todo}\n\n【必须遵守的约束】\n{constraints}\n\n【请你基于以上上下文继续，不要重复询问已经确认的信息】"
+    )
+}
+
+pub fn get_context_pack(
+    app: &AppHandle,
+    params: MemoryGetContextPackParams,
+) -> Result<String, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let project_id = params.project_id.unwrap_or_else(|| "default".to_string());
+    let session_id = params.session_id;
+
+    let project_summary = get_latest_summary(&conn, &project_id, None, "project")?;
+    let session_summary = if let Some(ref sid) = session_id {
+        get_latest_summary(&conn, &project_id, Some(sid), "session")?
+    } else {
+        None
+    };
+
+    let mut recent_messages: Vec<String> = Vec::new();
+    if let Some(sid) = session_id.as_deref() {
+        let msgs = fetch_recent_messages(&conn, sid, 8)?;
+        recent_messages = msgs
+            .into_iter()
+            .map(|(role, content, _)| format!("{}: {}", role, content))
+            .collect();
+    }
+
+    if recent_messages.is_empty() {
+        let mut stmt = conn
+            .prepare(
+                "SELECT role, content FROM messages
+                 WHERE project_id = ?
+                 ORDER BY created_at DESC
+                 LIMIT 8",
+            )
+            .map_err(|e| format!("Prepare project messages failed: {}", e))?;
+        let rows = stmt
+            .query_map(params![project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| format!("Query project messages failed: {}", e))?;
+
+        for r in rows {
+            let (role, content) = r.map_err(|e| format!("Row parse failed: {}", e))?;
+            recent_messages.push(format!("{}: {}", role, content));
+        }
+    }
+
+    Ok(build_context_pack_text(
+        project_summary,
+        session_summary,
+        recent_messages,
+    ))
 }

@@ -1,6 +1,6 @@
 pub mod db;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct MemoryRecordMessageParams {
@@ -14,4 +14,40 @@ pub struct MemoryRecordMessageParams {
     pub tags: Option<String>,
     pub metadata_json: Option<String>,
     pub created_at: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemoryCreateProjectParams {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemoryListSessionsParams {
+    pub project_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemoryGetContextPackParams {
+    pub project_id: Option<String>,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemoryProjectInfo {
+    pub project_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub updated_at: i64,
+    pub pinned: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemorySessionInfo {
+    pub session_id: String,
+    pub project_id: String,
+    pub title: Option<String>,
+    pub updated_at: i64,
+    pub source_url: Option<String>,
+    pub archived: i64,
 }

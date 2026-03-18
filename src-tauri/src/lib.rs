@@ -14,8 +14,9 @@ const WINDOW_SHOW_DELAY: u64 = 50;
 
 use app::{
     invoke::{
-        clear_cache_and_restart, download_file, download_file_by_binary, memory_record_message,
-        send_notification, update_theme_mode,
+        clear_cache_and_restart, download_file, download_file_by_binary, memory_create_project,
+        memory_get_context_pack, memory_list_projects, memory_list_sessions,
+        memory_record_message, send_notification, update_theme_mode,
     },
     setup::{set_global_shortcut, set_system_tray},
     window::{open_additional_window_safe, set_window, MultiWindowState},
@@ -82,6 +83,10 @@ pub fn run_app() {
             update_theme_mode,
             clear_cache_and_restart,
             memory_record_message,
+            memory_create_project,
+            memory_list_projects,
+            memory_list_sessions,
+            memory_get_context_pack,
         ])
         .setup(move |app| {
             app.manage(MultiWindowState::new(
