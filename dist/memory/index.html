@@ -35,6 +35,28 @@
 
           <div class="panel">
             <div class="panel-header">
+              <div class="panel-title">Project Summary</div>
+              <div class="panel-actions">
+                <button id="btnRefreshSummary">Refresh</button>
+              </div>
+            </div>
+            <div id="projectSummary" class="summary-box">No summary yet.</div>
+            <div class="section-title">Summary Blocks</div>
+            <div id="summaryList" class="list summaries"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">Session Messages</div>
+              <div class="panel-actions">
+                <button id="btnLoadMore">Load More</button>
+              </div>
+            </div>
+            <div id="messageList" class="list messages"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
               <div class="panel-title">Context Pack</div>
               <div class="panel-actions">
                 <button id="btnGenerate">Generate</button>
@@ -50,8 +72,16 @@
           <div class="section-title">Search</div>
           <div class="search-bar">
             <input id="searchInput" placeholder="Search messages..." />
+            <select id="searchScope">
+              <option value="messages">Messages</option>
+              <option value="summaries">Summaries</option>
+            </select>
             <button id="btnSearch">Search</button>
           </div>
+          <label class="checkbox">
+            <input type="checkbox" id="searchProjectOnly" checked />
+            Current project only
+          </label>
           <div id="searchResults" class="list results"></div>
         </section>
       </div>

@@ -1,8 +1,10 @@
 use crate::app::window::open_memory_hub_window;
 use crate::memory::{
     db as memory_db, MemoryCreateProjectParams, MemoryGetContextPackParams,
-    MemoryContinueParams, MemoryListSessionsParams, MemoryProjectInfo, MemoryRecordMessageParams,
-    MemorySearchParams, MemorySearchItem, MemorySessionInfo, MemorySetProjectParams,
+    MemoryContinueParams, MemoryListMessagesParams, MemoryListSessionsParams,
+    MemoryListSummariesParams, MemoryProjectInfo, MemoryRecordMessageParams, MemorySearchParams,
+    MemorySearchItem, MemorySearchSummariesParams, MemorySessionInfo, MemorySetProjectParams,
+    MemorySummaryInfo, MemoryMessageInfo,
 };
 use serde_json::json;
 use crate::util::{check_file_or_append, get_download_message_with_lang, show_toast, MessageType};
@@ -181,6 +183,14 @@ pub fn memory_search_messages(
 }
 
 #[command]
+pub fn memory_search_summaries(
+    app: AppHandle,
+    params: MemorySearchSummariesParams,
+) -> Result<Vec<MemorySummaryInfo>, String> {
+    memory_db::search_summaries(&app, params)
+}
+
+#[command]
 pub fn memory_continue_project(app: AppHandle, params: MemoryContinueParams) -> Result<String, String> {
     let pack = memory_db::get_context_pack(
         &app,
@@ -216,6 +226,22 @@ pub fn memory_set_active_project(
             .map_err(|e| format!("Emit set project failed: {}", e))?;
     }
     Ok(())
+}
+
+#[command]
+pub fn memory_list_summaries(
+    app: AppHandle,
+    params: MemoryListSummariesParams,
+) -> Result<Vec<MemorySummaryInfo>, String> {
+    memory_db::list_summaries(&app, params)
+}
+
+#[command]
+pub fn memory_list_messages(
+    app: AppHandle,
+    params: MemoryListMessagesParams,
+) -> Result<Vec<MemoryMessageInfo>, String> {
+    memory_db::list_messages(&app, params)
 }
 
 #[command]

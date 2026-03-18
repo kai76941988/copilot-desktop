@@ -79,6 +79,16 @@ body {
   overflow: auto;
 }
 
+.summary-box {
+  background: #f8f5f0;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 14px;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+
 .list-item {
   padding: 10px 12px;
   border-radius: 8px;
@@ -142,6 +152,7 @@ textarea {
 .search-bar {
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .search-bar input {
@@ -149,6 +160,29 @@ textarea {
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--panel-border);
+}
+
+.search-bar select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: #fff;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.summaries .list-item {
+  gap: 6px;
+}
+
+.messages .list-item {
+  gap: 6px;
 }
 
 button {

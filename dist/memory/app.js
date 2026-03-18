@@ -13,6 +13,14 @@ const elContext = document.getElementById("contextPack");
 const elStatus = document.getElementById("status");
 const elSearchInput = document.getElementById("searchInput");
 const elSearchResults = document.getElementById("searchResults");
+const elSearchScope = document.getElementById("searchScope");
+const elSearchProjectOnly = document.getElementById("searchProjectOnly");
+const elProjectSummary = document.getElementById("projectSummary");
+const elSummaryList = document.getElementById("summaryList");
+const elMessageList = document.getElementById("messageList");
+
+let messageOffset = 0;
+const messageLimit = 40;
 
 function setStatus(text) {
   elStatus.textContent = text;
@@ -55,6 +63,8 @@ function renderSessions() {
     item.onclick = () => {
       state.selectedSessionId = s.session_id;
       renderSessions();
+      loadSummaries();
+      loadMessages(false);
     };
     elSessionList.appendChild(item);
   });
@@ -69,10 +79,46 @@ function renderSearchResults(items) {
   items.forEach((m) => {
     const item = document.createElement("div");
     item.className = "list-item";
-    item.innerHTML = `<div>${m.role}: ${m.content.slice(0, 160)}</div><small>${formatTime(
+    const preview = (m.content || "").slice(0, 160);
+    const type = m.summary_type ? `[${m.summary_type}] ` : "";
+    item.innerHTML = `<div>${type}${m.role ? m.role + ":" : ""} ${preview}</div><small>${formatTime(
       m.created_at
     )}</small>`;
     elSearchResults.appendChild(item);
+  });
+}
+
+function renderSummaries(items) {
+  elSummaryList.innerHTML = "";
+  if (!items.length) {
+    elSummaryList.innerHTML = '<div class="list-item">No summaries yet</div>';
+    return;
+  }
+  items.forEach((s) => {
+    const item = document.createElement("div");
+    item.className = "list-item";
+    item.innerHTML = `<div>[${s.summary_type}] ${s.content.slice(0, 160)}</div><small>${formatTime(
+      s.created_at
+    )}</small>`;
+    elSummaryList.appendChild(item);
+  });
+}
+
+function renderMessages(items, append) {
+  if (!append) {
+    elMessageList.innerHTML = "";
+  }
+  if (!items.length && !append) {
+    elMessageList.innerHTML = '<div class="list-item">No messages yet</div>';
+    return;
+  }
+  items.forEach((m) => {
+    const item = document.createElement("div");
+    item.className = "list-item";
+    item.innerHTML = `<div>${m.role}: ${m.content.slice(0, 200)}</div><small>${formatTime(
+      m.created_at
+    )}</small>`;
+    elMessageList.appendChild(item);
   });
 }
 
@@ -85,6 +131,8 @@ async function loadProjects() {
   }
   renderProjects();
   await loadSessions();
+  await loadSummaries();
+  await loadMessages(false);
   setStatus("Ready");
 }
 
@@ -97,11 +145,48 @@ async function loadSessions() {
   renderSessions();
 }
 
+async function loadSummaries() {
+  if (!invoke || !state.selectedProjectId) return;
+  const projectSummary = await invoke("memory_list_summaries", {
+    project_id: state.selectedProjectId,
+    summary_type: "project",
+    limit: 1,
+  });
+  if (projectSummary && projectSummary.length) {
+    elProjectSummary.textContent = projectSummary[0].content;
+  } else {
+    elProjectSummary.textContent = "No summary yet.";
+  }
+
+  const summaries = await invoke("memory_list_summaries", {
+    project_id: state.selectedProjectId,
+    session_id: state.selectedSessionId,
+    limit: 30,
+  });
+  renderSummaries(summaries || []);
+}
+
+async function loadMessages(append) {
+  if (!invoke || !state.selectedSessionId) return;
+  if (!append) {
+    messageOffset = 0;
+  }
+  const items = await invoke("memory_list_messages", {
+    session_id: state.selectedSessionId,
+    limit: messageLimit,
+    offset: messageOffset,
+  });
+  renderMessages(items || [], append);
+  messageOffset += messageLimit;
+}
+
 async function selectProject(projectId) {
   state.selectedProjectId = projectId;
   state.selectedSessionId = null;
   renderProjects();
   await loadSessions();
+  await loadSummaries();
+  await loadMessages(false);
 }
 
 async function generateContext() {
@@ -141,13 +226,25 @@ async function doSearch() {
     return;
   }
   setStatus("Searching...");
-  const results = await invoke("memory_search_messages", {
-    query,
-    project_id: state.selectedProjectId,
-    limit: 50,
-  });
-  renderSearchResults(results);
-  setStatus(`Found ${results.length} results`);
+  const scope = elSearchScope.value;
+  const projectOnly = elSearchProjectOnly.checked;
+  if (scope === "summaries") {
+    const results = await invoke("memory_search_summaries", {
+      query,
+      project_id: projectOnly ? state.selectedProjectId : null,
+      limit: 50,
+    });
+    renderSearchResults(results);
+    setStatus(`Found ${results.length} summary results`);
+  } else {
+    const results = await invoke("memory_search_messages", {
+      query,
+      project_id: projectOnly ? state.selectedProjectId : null,
+      limit: 50,
+    });
+    renderSearchResults(results);
+    setStatus(`Found ${results.length} message results`);
+  }
 }
 
 document.getElementById("btnRefresh").onclick = loadProjects;
@@ -169,6 +266,8 @@ document.getElementById("btnCopy").onclick = async () => {
 document.getElementById("btnContinue").onclick = continueInCopilot;
 document.getElementById("btnSetActive").onclick = setActiveProject;
 document.getElementById("btnSearch").onclick = doSearch;
+document.getElementById("btnRefreshSummary").onclick = loadSummaries;
+document.getElementById("btnLoadMore").onclick = () => loadMessages(true);
 elSearchInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     doSearch();

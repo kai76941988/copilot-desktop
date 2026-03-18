@@ -1,9 +1,10 @@
 use crate::memory::{
     MemoryCreateProjectParams, MemoryGetContextPackParams, MemoryListSessionsParams,
-    MemoryProjectInfo, MemoryRecordMessageParams, MemorySearchItem, MemorySearchParams,
-    MemorySessionInfo,
+    MemoryListMessagesParams, MemoryListSummariesParams, MemoryMessageInfo, MemoryProjectInfo,
+    MemoryRecordMessageParams, MemorySearchItem, MemorySearchParams, MemorySearchSummariesParams,
+    MemorySessionInfo, MemorySummaryInfo,
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
@@ -153,6 +154,15 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             content,
             tokenize = 'porter'
         );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS summaries_fts USING fts5(
+            summary_id,
+            project_id,
+            session_id,
+            summary_type,
+            content,
+            tokenize = 'porter'
+        );
         "#,
     )
     .map_err(|e| format!("Init schema failed: {}", e))?;
@@ -287,6 +297,10 @@ fn upsert_summary(
             "DELETE FROM summaries WHERE summary_type = ? AND project_id = ? AND session_id IS ?",
             params![summary_type, project_id, session_id],
         );
+        let _ = conn.execute(
+            "DELETE FROM summaries_fts WHERE summary_type = ? AND project_id = ? AND session_id IS ?",
+            params![summary_type, project_id, session_id],
+        );
     }
 
     let summary_id = Uuid::new_v4().to_string();
@@ -306,6 +320,11 @@ fn upsert_summary(
         ],
     )
     .map_err(|e| format!("Insert summary failed: {}", e))?;
+
+    let _ = conn.execute(
+        "INSERT INTO summaries_fts (summary_id, project_id, session_id, summary_type, content) VALUES (?, ?, ?, ?, ?)",
+        params![summary_id, project_id, session_id, summary_type, content],
+    );
     Ok(())
 }
 
@@ -752,5 +771,184 @@ pub fn search_messages(
         }
     }
 
+    Ok(out)
+}
+
+pub fn search_summaries(
+    app: &AppHandle,
+    params: MemorySearchSummariesParams,
+) -> Result<Vec<MemorySummaryInfo>, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let query = params.query.trim().to_string();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let limit = params.limit.unwrap_or(50).min(200);
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .map(|t| format!("{}*", t.replace('"', "")))
+        .collect();
+    let fts_query = if tokens.is_empty() {
+        query.clone()
+    } else {
+        tokens.join(" ")
+    };
+
+    let mut out: Vec<MemorySummaryInfo> = Vec::new();
+    if let Some(project_id) = params.project_id {
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.summary_id, s.project_id, s.session_id, s.summary_type,
+                        s.source_range_start, s.source_range_end, s.content, s.created_at
+                 FROM summaries_fts f
+                 JOIN summaries s ON s.summary_id = f.summary_id
+                 WHERE f MATCH ? AND s.project_id = ?
+                 ORDER BY s.created_at DESC
+                 LIMIT ?",
+            )
+            .map_err(|e| format!("Prepare search summaries failed: {}", e))?;
+        let rows = stmt
+            .query_map(params![fts_query, project_id, limit], |row| {
+                Ok(MemorySummaryInfo {
+                    summary_id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    session_id: row.get(2)?,
+                    summary_type: row.get(3)?,
+                    source_range_start: row.get(4)?,
+                    source_range_end: row.get(5)?,
+                    content: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })
+            .map_err(|e| format!("Query search summaries failed: {}", e))?;
+        for r in rows {
+            out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+        }
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.summary_id, s.project_id, s.session_id, s.summary_type,
+                        s.source_range_start, s.source_range_end, s.content, s.created_at
+                 FROM summaries_fts f
+                 JOIN summaries s ON s.summary_id = f.summary_id
+                 WHERE f MATCH ?
+                 ORDER BY s.created_at DESC
+                 LIMIT ?",
+            )
+            .map_err(|e| format!("Prepare search summaries failed: {}", e))?;
+        let rows = stmt
+            .query_map(params![fts_query, limit], |row| {
+                Ok(MemorySummaryInfo {
+                    summary_id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    session_id: row.get(2)?,
+                    summary_type: row.get(3)?,
+                    source_range_start: row.get(4)?,
+                    source_range_end: row.get(5)?,
+                    content: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })
+            .map_err(|e| format!("Query search summaries failed: {}", e))?;
+        for r in rows {
+            out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+        }
+    }
+
+    Ok(out)
+}
+
+pub fn list_summaries(
+    app: &AppHandle,
+    params: MemoryListSummariesParams,
+) -> Result<Vec<MemorySummaryInfo>, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let mut sql = String::from(
+        "SELECT summary_id, project_id, session_id, summary_type, source_range_start, source_range_end, content, created_at
+         FROM summaries WHERE project_id = ?",
+    );
+    let mut values: Vec<Value> = vec![Value::from(params.project_id.clone())];
+
+    if let Some(ref session_id) = params.session_id {
+        sql.push_str(" AND session_id = ?");
+        values.push(Value::from(session_id.clone()));
+    }
+    if let Some(ref summary_type) = params.summary_type {
+        sql.push_str(" AND summary_type = ?");
+        values.push(Value::from(summary_type.clone()));
+    }
+
+    let limit = params.limit.unwrap_or(50).min(200);
+    sql.push_str(" ORDER BY created_at DESC LIMIT ?");
+    values.push(Value::from(limit));
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("Prepare list summaries failed: {}", e))?;
+    let rows = stmt
+        .query_map(params_from_iter(values), |row| {
+            Ok(MemorySummaryInfo {
+                summary_id: row.get(0)?,
+                project_id: row.get(1)?,
+                session_id: row.get(2)?,
+                summary_type: row.get(3)?,
+                source_range_start: row.get(4)?,
+                source_range_end: row.get(5)?,
+                content: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })
+        .map_err(|e| format!("Query summaries failed: {}", e))?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+    }
+    Ok(out)
+}
+
+pub fn list_messages(
+    app: &AppHandle,
+    params: MemoryListMessagesParams,
+) -> Result<Vec<MemoryMessageInfo>, String> {
+    let conn = open_connection(app)?;
+    init_schema(&conn)?;
+
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0).max(0);
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, session_id, role, content, created_at, message_order
+             FROM messages
+             WHERE session_id = ?
+             ORDER BY created_at DESC
+             LIMIT ? OFFSET ?",
+        )
+        .map_err(|e| format!("Prepare list messages failed: {}", e))?;
+
+    let rows = stmt
+        .query_map(params![params.session_id, limit, offset], |row| {
+            Ok(MemoryMessageInfo {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                role: row.get(2)?,
+                content: row.get(3)?,
+                created_at: row.get(4)?,
+                message_order: row.get(5)?,
+            })
+        })
+        .map_err(|e| format!("Query messages failed: {}", e))?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("Row parse failed: {}", e))?);
+    }
+    out.reverse();
     Ok(out)
 }
